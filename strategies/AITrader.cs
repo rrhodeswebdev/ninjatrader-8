@@ -23,8 +23,9 @@ namespace NinjaTrader.NinjaScript.Strategies
     public class AITrader : Strategy
     {
         private HttpClient httpClient;
-        private string serverUrl = "https://c0b9f81d8e8a.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
+        private string serverUrl = "https://df6159faef89.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
         private bool historicalDataSent = false;
+        private int historicalBarsToSend = 5000; // Configurable parameter
 
         // Trading direction flags
         private bool allowLongTrades = true;
@@ -63,6 +64,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 StopTargetHandling = StopTargetHandling.PerEntryExecution;
                 BarsRequiredToTrade = 20;
                 IsInstantiatedOnEachOptimizationIteration = true;
+
+                // Default historical bars to send (can be changed in strategy parameters)
+                HistoricalBarsToSend = 5000;
             }
             else if (State == State.Configure)
             {
@@ -97,18 +101,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         protected override void OnBarUpdate()
         {
-            // Wait until we have at least 5000 bars loaded before sending historical data
+            // Wait until we have enough bars loaded before sending historical data
             if (!historicalDataSent)
             {
-                // Check if we have at least 5000 bars
-                if (CurrentBar >= 4999)
+                // Check if we have enough bars OR if we're in realtime (use whatever bars are available)
+                if (CurrentBar >= (historicalBarsToSend - 1) || State == State.Realtime)
                 {
+                    Print("===========================================");
+                    Print("SENDING HISTORICAL DATA");
+                    Print("Current Bar: " + CurrentBar);
+                    Print("Bars to send: " + Math.Min(CurrentBar + 1, historicalBarsToSend));
+                    Print("===========================================");
                     SendHistoricalData();
                     historicalDataSent = true;
                 }
                 else
                 {
                     // Not enough bars yet, keep waiting
+                    if (CurrentBar % 100 == 0) // Log every 100 bars
+                    {
+                        Print("Waiting for historical data... Current bars: " + (CurrentBar + 1) + " / " + historicalBarsToSend);
+                    }
                     return;
                 }
             }
@@ -127,13 +140,15 @@ namespace NinjaTrader.NinjaScript.Strategies
         private void SendHistoricalData()
         {
             // Capture bar count and data before async operation
-            int barCount = CurrentBar + 1;
+            int barCount = Math.Min(CurrentBar + 1, historicalBarsToSend);
             StringBuilder jsonBuilder = new StringBuilder();
             jsonBuilder.Append("{\"bars\":[");
 
-            for (int barsAgo = CurrentBar; barsAgo >= 0; barsAgo--)
+            // Send only the requested number of bars (or all available if less)
+            int startBar = Math.Min(CurrentBar, historicalBarsToSend - 1);
+            for (int barsAgo = startBar; barsAgo >= 0; barsAgo--)
             {
-                if (barsAgo < CurrentBar)
+                if (barsAgo < startBar)
                     jsonBuilder.Append(",");
 
                 jsonBuilder.AppendFormat("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4}}}",
@@ -548,5 +563,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
         }
+
+        #region Properties
+        [NinjaScriptProperty]
+        [Range(100, 50000)]
+        [Display(Name = "Historical Bars To Send", Description = "Number of historical bars to send to RNN server", Order = 1, GroupName = "AI Parameters")]
+        public int HistoricalBarsToSend
+        {
+            get { return historicalBarsToSend; }
+            set { historicalBarsToSend = value; }
+        }
+        #endregion
     }
 }

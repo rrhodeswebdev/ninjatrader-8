@@ -3,11 +3,12 @@ name = "rnn-server"
 version = "0.1.0"
 description = "RNN server for NT8"
 readme = "README.md"
-requires-python = "==3.12.*"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "fastapi[standard]>=0.118.0",
     "pandas>=2.2.0",
-    "torch==2.2.2",
+    "torch>=2.0.0",
     "scikit-learn>=1.5.0",
-    "numpy>=1.26.0,<2.0.0"
+    "numpy>=1.26.0,<2.0.0",
+    "hurst>=0.0.5"
 ]
