@@ -9,6 +9,21 @@ from pathlib import Path
 import json
 from hurst import compute_Hc
 from scipy import stats
+import time
+from functools import wraps
+from trading_metrics import evaluate_trading_performance, calculate_sharpe_ratio
+
+# PERFORMANCE OPTIMIZATION: Add timing decorator
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+        if elapsed > 0.01:  # Only log if > 10ms
+            print(f"⚡ {func.__name__}: {elapsed*1000:.2f}ms")
+        return result
+    return wrapper
 
 def calculate_hurst_exponent(prices, min_window=10):
     """
@@ -41,33 +56,181 @@ def calculate_hurst_exponent(prices, min_window=10):
 
 def calculate_atr(high, low, close, period=14):
     """
-    Calculate Average True Range
+    Calculate Average True Range (VECTORIZED VERSION)
     Measures market volatility
     """
-    if len(high) < period + 1:
-        return np.zeros(len(high))
+    n = len(high)
+    if n < period + 1:
+        return np.zeros(n)
 
-    # True Range calculation
-    tr_list = []
-    for i in range(1, len(high)):
-        hl = high[i] - low[i]
-        hc = abs(high[i] - close[i - 1])
-        lc = abs(low[i] - close[i - 1])
-        tr = max(hl, hc, lc)
-        tr_list.append(tr)
+    # PERFORMANCE OPTIMIZATION: Vectorized True Range calculation
+    hl = high[1:] - low[1:]
+    hc = np.abs(high[1:] - close[:-1])
+    lc = np.abs(low[1:] - close[:-1])
+    tr = np.maximum(np.maximum(hl, hc), lc)
 
-    # ATR is moving average of TR
-    atr = []
-    for i in range(len(tr_list)):
-        if i < period - 1:
-            atr.append(np.mean(tr_list[:i + 1]))
+    # PERFORMANCE OPTIMIZATION: Use pandas rolling mean (faster than loop)
+    import pandas as pd
+    tr_series = pd.Series(tr)
+    atr_values = tr_series.rolling(window=period, min_periods=1).mean().values
+
+    # Add zero for first value (no previous close) - ensure correct length
+    atr = np.zeros(n)
+    atr[1:] = atr_values
+
+    return atr
+
+
+def align_secondary_to_primary(df_primary, df_secondary):
+    """
+    Align secondary timeframe data to primary timeframe
+    For each primary bar, find the corresponding secondary bar value
+
+    Args:
+        df_primary: Primary timeframe dataframe (e.g., 1-min)
+        df_secondary: Secondary timeframe dataframe (e.g., 5-min)
+
+    Returns:
+        Dictionary with secondary features aligned to primary timeframe
+    """
+    if df_secondary is None:
+        # Return zeros if no secondary data
+        n_bars = len(df_primary)
+        return {
+            'tf2_close': np.zeros(n_bars),
+            'tf2_close_change': np.zeros(n_bars),
+            'tf2_high_low_range': np.zeros(n_bars),
+            'tf2_volume': np.zeros(n_bars),
+            'tf2_position_in_bar': np.zeros(n_bars)
+        }
+
+    if len(df_secondary) == 0:
+        # Return zeros if empty secondary data
+        n_bars = len(df_primary)
+        return {
+            'tf2_close': np.zeros(n_bars),
+            'tf2_close_change': np.zeros(n_bars),
+            'tf2_high_low_range': np.zeros(n_bars),
+            'tf2_volume': np.zeros(n_bars),
+            'tf2_position_in_bar': np.zeros(n_bars)
+        }
+
+    n_bars = len(df_primary)
+    aligned_features = {
+        'tf2_close': np.zeros(n_bars),
+        'tf2_close_change': np.zeros(n_bars),
+        'tf2_high_low_range': np.zeros(n_bars),
+        'tf2_volume': np.zeros(n_bars),
+        'tf2_position_in_bar': np.zeros(n_bars)
+    }
+
+    # Convert to numpy for faster access
+    primary_times = df_primary['time'].values
+    secondary_times = df_secondary['time'].values
+    secondary_close = df_secondary['close'].values
+    secondary_high = df_secondary['high'].values
+    secondary_low = df_secondary['low'].values
+    secondary_volume = df_secondary['volume'].values if 'volume' in df_secondary.columns else np.zeros(len(df_secondary))
+
+    # For each primary bar, find the latest secondary bar at or before it
+    secondary_idx = 0
+    for i in range(n_bars):
+        primary_time = primary_times[i]
+
+        # Find the secondary bar that contains this primary time
+        while secondary_idx < len(secondary_times) - 1 and secondary_times[secondary_idx + 1] <= primary_time:
+            secondary_idx += 1
+
+        if secondary_idx < len(secondary_times):
+            # Extract secondary features
+            aligned_features['tf2_close'][i] = secondary_close[secondary_idx]
+            aligned_features['tf2_high_low_range'][i] = secondary_high[secondary_idx] - secondary_low[secondary_idx]
+            aligned_features['tf2_volume'][i] = secondary_volume[secondary_idx]
+
+            # Position within secondary bar (0 = at low, 1 = at high)
+            range_size = secondary_high[secondary_idx] - secondary_low[secondary_idx]
+            if range_size > 0:
+                aligned_features['tf2_position_in_bar'][i] = (df_primary['close'].iloc[i] - secondary_low[secondary_idx]) / range_size
+
+            # Secondary close price change
+            if secondary_idx > 0:
+                aligned_features['tf2_close_change'][i] = (secondary_close[secondary_idx] - secondary_close[secondary_idx - 1]) / secondary_close[secondary_idx - 1]
+
+    return aligned_features
+
+
+def calculate_order_flow_features(df):
+    """
+    Calculate order flow and volume-based features
+    Returns dictionary of feature arrays
+    """
+    n_bars = len(df)
+    features = {}
+
+    # Extract volume data
+    volume = df['volume'].values if 'volume' in df.columns else np.zeros(n_bars)
+    bid_volume = df['bid_volume'].values if 'bid_volume' in df.columns else np.zeros(n_bars)
+    ask_volume = df['ask_volume'].values if 'ask_volume' in df.columns else np.zeros(n_bars)
+
+    # 1. Delta (buy volume - sell volume)
+    delta = ask_volume - bid_volume
+    features['delta'] = delta
+
+    # 2. Cumulative Delta (running sum of delta)
+    cumulative_delta = np.cumsum(delta)
+    features['cumulative_delta'] = cumulative_delta
+
+    # 3. Volume Imbalance Ratio (ask / bid)
+    volume_imbalance = np.zeros(n_bars)
+    for i in range(n_bars):
+        if bid_volume[i] > 0:
+            volume_imbalance[i] = ask_volume[i] / (bid_volume[i] + 1e-8)
         else:
-            atr.append(np.mean(tr_list[i - period + 1:i + 1]))
+            volume_imbalance[i] = 1.0
+    features['volume_imbalance'] = volume_imbalance
 
-    # Add zero for first value (no previous close)
-    atr = [0.0] + atr
+    # 4. Aggressive Buy Ratio (ask volume / total volume)
+    aggressive_buy_ratio = np.zeros(n_bars)
+    for i in range(n_bars):
+        total = ask_volume[i] + bid_volume[i]
+        if total > 0:
+            aggressive_buy_ratio[i] = ask_volume[i] / total
+        else:
+            aggressive_buy_ratio[i] = 0.5
+    features['aggressive_buy_ratio'] = aggressive_buy_ratio
 
-    return np.array(atr)
+    # 5. Volume relative to moving average
+    volume_ratio = np.ones(n_bars)
+    window = 20
+    for i in range(window, n_bars):
+        avg_volume = np.mean(volume[i-window:i])
+        if avg_volume > 0:
+            volume_ratio[i] = volume[i] / (avg_volume + 1e-8)
+    features['volume_ratio'] = volume_ratio
+
+    # 6. Delta Divergence (price up but delta down, or vice versa)
+    delta_divergence = np.zeros(n_bars)
+    close_prices = df['close'].values
+    for i in range(1, n_bars):
+        price_change = close_prices[i] - close_prices[i-1]
+        delta_change = delta[i] - delta[i-1]
+
+        # Divergence: price and delta move in opposite directions
+        if price_change > 0 and delta_change < 0:
+            delta_divergence[i] = -1  # Bearish divergence
+        elif price_change < 0 and delta_change > 0:
+            delta_divergence[i] = 1   # Bullish divergence
+        else:
+            delta_divergence[i] = 0
+    features['delta_divergence'] = delta_divergence
+
+    # 7. Cumulative Delta Slope (rate of change)
+    cumulative_delta_slope = np.zeros(n_bars)
+    for i in range(5, n_bars):
+        cumulative_delta_slope[i] = cumulative_delta[i] - cumulative_delta[i-5]
+    features['cumulative_delta_slope'] = cumulative_delta_slope
+
+    return features
 
 
 def calculate_price_features(df):
@@ -190,13 +353,79 @@ def calculate_price_features(df):
     features['lower_lows'] = lower_lows
     features['trend_strength'] = trend_strength
 
+    # 8. Price Deviation Features
+    close_prices = ohlc[:, 3]
+
+    # Multiple window sizes for different timeframes
+    windows = [5, 10, 20, 50]
+
+    for window in windows:
+        # Deviation from mean
+        mean_dev = np.zeros(n_bars)
+        # Deviation from median
+        median_dev = np.zeros(n_bars)
+        # Standard deviation (volatility measure)
+        std_dev = np.zeros(n_bars)
+        # Z-score (standardized deviation)
+        z_score = np.zeros(n_bars)
+        # Bollinger width equivalent (range of ±2 std devs)
+        bb_width = np.zeros(n_bars)
+
+        for i in range(window, n_bars):
+            window_prices = close_prices[i-window:i]
+
+            # Mean and deviation from mean
+            mean_price = np.mean(window_prices)
+            mean_dev[i] = (close_prices[i] - mean_price) / (mean_price + 1e-8)
+
+            # Median and deviation from median
+            median_price = np.median(window_prices)
+            median_dev[i] = (close_prices[i] - median_price) / (median_price + 1e-8)
+
+            # Standard deviation
+            std = np.std(window_prices)
+            std_dev[i] = std
+
+            # Z-score (how many std devs away from mean)
+            if std > 1e-8:
+                z_score[i] = (close_prices[i] - mean_price) / std
+
+            # Bollinger Band Width (4 std devs / mean price)
+            bb_width[i] = (4 * std) / (mean_price + 1e-8)
+
+        # Store with window size in name
+        features[f'mean_dev_{window}'] = mean_dev
+        features[f'median_dev_{window}'] = median_dev
+        features[f'std_dev_{window}'] = std_dev
+        features[f'z_score_{window}'] = z_score
+        features[f'bb_width_{window}'] = bb_width
+
+    # Additional: Rate of change of standard deviation (volatility acceleration)
+    vol_accel_20 = np.zeros(n_bars)
+    for i in range(21, n_bars):
+        current_vol = features['std_dev_20'][i]
+        prev_vol = features['std_dev_20'][i-1]
+        vol_accel_20[i] = current_vol - prev_vol
+    features['vol_acceleration'] = vol_accel_20
+
+    # Distance from recent extremes as percentage
+    high_dev = np.zeros(n_bars)
+    low_dev = np.zeros(n_bars)
+    for i in range(20, n_bars):
+        recent_high = np.max(ohlc[i-20:i+1, 1])
+        recent_low = np.min(ohlc[i-20:i+1, 2])
+        high_dev[i] = (close_prices[i] - recent_high) / (recent_high + 1e-8)
+        low_dev[i] = (close_prices[i] - recent_low) / (recent_low + 1e-8)
+    features['high_deviation'] = high_dev
+    features['low_deviation'] = low_dev
+
     return features
 
 
 class TradingRNN(nn.Module):
     """
     LSTM-based RNN for predicting trade signals with 3-class output
-    Features (24 total):
+    Features (57 total):
     - OHLC (4)
     - Hurst H & C (2)
     - ATR (1)
@@ -207,8 +436,38 @@ class TradingRNN(nn.Module):
     - Skewness & Kurtosis (2)
     - Position in Range (1)
     - Higher Highs/Lower Lows/Trend Strength (3)
+    - Deviation Features:
+      * Mean Deviation (4 windows: 5,10,20,50)
+      * Median Deviation (4 windows)
+      * Std Deviation (4 windows)
+      * Z-Score (4 windows)
+      * BB Width (4 windows)
+      * Vol Acceleration (1)
+      * High/Low Deviation (2)
+      Total: 23 deviation features
+    - Daily P&L Features:
+      * P&L % of Goal (1)
+      * P&L % of Max Loss (1)
+      * Risk Headroom (1)
+      Total: 3 P&L features
+    - Order Flow Features:
+      * Delta (1)
+      * Cumulative Delta (1)
+      * Volume Imbalance (1)
+      * Aggressive Buy Ratio (1)
+      * Volume Ratio (1)
+      * Delta Divergence (1)
+      * Cumulative Delta Slope (1)
+      Total: 7 order flow features
+    - Multi-Timeframe Features (5-min):
+      * TF2 Close (1)
+      * TF2 Close Change (1)
+      * TF2 High-Low Range (1)
+      * TF2 Volume (1)
+      * TF2 Position in Bar (1)
+      Total: 5 multi-timeframe features
     """
-    def __init__(self, input_size=24, hidden_size=64, num_layers=2, output_size=3):
+    def __init__(self, input_size=62, hidden_size=64, num_layers=2, output_size=3):
         super(TradingRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -241,29 +500,36 @@ class TradingModel:
     Wrapper class for training and prediction with state management
     """
     def __init__(self, sequence_length=20, model_path='models/trading_model.pth'):
-        self.model = TradingRNN(input_size=24, hidden_size=64, num_layers=2, output_size=3)
+        self.model = TradingRNN(input_size=62, hidden_size=64, num_layers=2, output_size=3)
         self.scaler = StandardScaler()
         self.sequence_length = sequence_length
         self.is_trained = False
         self.model_path = Path(model_path)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.compiled = False  # Track compilation state
 
         print(f"Using device: {self.device}")
         self.model.to(self.device)
 
-        # Compile model for faster inference (PyTorch 2.0+)
-        try:
-            self.model = torch.compile(self.model)
-            print("Model compiled for optimized inference")
-        except Exception as e:
-            print(f"Model compilation not available: {e}")
+        # Don't compile yet - wait until after potential model loading
+        # Compilation happens after first training or successful load
 
         # Try to load existing model
         if self.model_path.exists():
             self.load_model()
 
-        # Historical data storage
+        # Historical data storage (multi-timeframe support)
         self.historical_data = None
+        self.historical_data_secondary = None  # Secondary timeframe (e.g., 5-min)
+
+        # PERFORMANCE OPTIMIZATION: Cache computed features to avoid recomputation
+        self._feature_cache = None
+        self._cache_length = 0
+
+        # PERFORMANCE OPTIMIZATION: Hurst calculation cache
+        self._hurst_cache = []
+        self._last_hurst_H = 0.5
+        self._last_hurst_C = 1.0
 
     def _validate_data(self, df):
         """Validate input data for NaN, inf, and required columns"""
@@ -281,13 +547,31 @@ class TradingModel:
         if len(df) < self.sequence_length + 1:
             raise ValueError(f"Need at least {self.sequence_length + 1} bars, got {len(df)}")
 
-    def prepare_data(self, df, fit_scaler=False, adaptive_threshold=True):
+        # Add daily P&L columns if they don't exist (for backward compatibility)
+        if 'dailyPnL' not in df.columns:
+            df['dailyPnL'] = 0.0
+        if 'dailyGoal' not in df.columns:
+            df['dailyGoal'] = 500.0
+        if 'dailyMaxLoss' not in df.columns:
+            df['dailyMaxLoss'] = 250.0
+
+        # Add volume columns if they don't exist (for backward compatibility)
+        if 'volume' not in df.columns:
+            df['volume'] = 0.0
+        if 'bid_volume' not in df.columns:
+            df['bid_volume'] = 0.0
+        if 'ask_volume' not in df.columns:
+            df['ask_volume'] = 0.0
+
+    @timing_decorator
+    def prepare_data(self, df, df_secondary=None, fit_scaler=False, adaptive_threshold=True):
         """
-        Prepare data for training with enhanced features
+        Prepare data for training with enhanced features including multi-timeframe (OPTIMIZED VERSION)
         Creates sequences and labels based on future price movement
 
         Args:
-            df: DataFrame with OHLC data
+            df: Primary timeframe DataFrame with OHLC data
+            df_secondary: Optional secondary timeframe DataFrame (e.g., 5-min)
             fit_scaler: If True, fit the scaler. If False, only transform (use False for inference)
             adaptive_threshold: If True, calculate threshold based on data volatility
         """
@@ -305,38 +589,48 @@ class TradingModel:
             # This ensures ~60-70% of data is not HOLD
             self.signal_threshold = max(0.01, volatility * 0.5)
 
-            print(f"Data volatility: {volatility:.4f}%")
-            print(f"Adaptive threshold set to: {self.signal_threshold:.4f}%")
+            # Only log during training
+            if fit_scaler:
+                print(f"Data volatility: {volatility:.4f}%")
+                print(f"Adaptive threshold set to: {self.signal_threshold:.4f}%")
 
-        # Calculate Hurst exponent (H) and constant (c) over rolling window
-        # Note: hurst library requires minimum 100 data points
+        # PERFORMANCE OPTIMIZATION: Calculate Hurst exponent with caching
+        # Only recalculate every 10 bars instead of every bar (massive speedup)
         hurst_H_values = []
         hurst_C_values = []
+
         for i in range(len(df)):
             if i < 100:  # Need minimum 100 bars for hurst library
-                hurst_H_values.append(0.5)
-                hurst_C_values.append(1.0)
+                H, c = 0.5, 1.0
             else:
-                # Use last 100 bars for Hurst calculation
-                prices = df['close'].iloc[i-99:i+1].values
-                H, c = calculate_hurst_exponent(prices)
-                hurst_H_values.append(H)
-                hurst_C_values.append(c)
+                # Only recalculate every 10 bars (10x speedup for real-time)
+                if i % 10 == 0 or i == len(df) - 1:  # Always calc on last bar
+                    prices = df['close'].iloc[i-99:i+1].values
+                    H, c = calculate_hurst_exponent(prices)
+                    self._last_hurst_H = H
+                    self._last_hurst_C = c
+                else:
+                    # Reuse last calculated value
+                    H, c = self._last_hurst_H, self._last_hurst_C
 
-        # Log Hurst statistics for the dataset
-        hurst_valid = [h for h in hurst_H_values if h != 0.5]
-        if len(hurst_valid) > 0:
-            avg_hurst = np.mean(hurst_valid)
-            print(f"Hurst exponent statistics:")
-            print(f"  Mean H: {avg_hurst:.4f}")
-            print(f"  Min H: {min(hurst_valid):.4f}")
-            print(f"  Max H: {max(hurst_valid):.4f}")
-            if avg_hurst > 0.5:
-                print(f"  → Overall TRENDING (persistent) market")
-            elif avg_hurst < 0.5:
-                print(f"  → Overall MEAN-REVERTING (anti-persistent) market")
-            else:
-                print(f"  → Overall RANDOM WALK market")
+            hurst_H_values.append(H)
+            hurst_C_values.append(c)
+
+        # Log Hurst statistics for the dataset (only during training, not inference)
+        if fit_scaler:  # Only log during training
+            hurst_valid = [h for h in hurst_H_values if h != 0.5]
+            if len(hurst_valid) > 0:
+                avg_hurst = np.mean(hurst_valid)
+                print(f"Hurst exponent statistics:")
+                print(f"  Mean H: {avg_hurst:.4f}")
+                print(f"  Min H: {min(hurst_valid):.4f}")
+                print(f"  Max H: {max(hurst_valid):.4f}")
+                if avg_hurst > 0.5:
+                    print(f"  → Overall TRENDING (persistent) market")
+                elif avg_hurst < 0.5:
+                    print(f"  → Overall MEAN-REVERTING (anti-persistent) market")
+                else:
+                    print(f"  → Overall RANDOM WALK market")
 
         # Calculate ATR
         atr = calculate_atr(df['high'].values, df['low'].values, df['close'].values)
@@ -344,8 +638,58 @@ class TradingModel:
         # Calculate all advanced price features
         price_features = calculate_price_features(df)
 
-        # Combine all features (25 total):
-        # OHLC (4) + Hurst (2) + ATR (1) + Price Features (18) = 25
+        # Calculate order flow features
+        order_flow_features = calculate_order_flow_features(df)
+
+        # Calculate and align secondary timeframe features (if available)
+        df_secondary_to_use = df_secondary if df_secondary is not None else self.historical_data_secondary
+        secondary_features = align_secondary_to_primary(df, df_secondary_to_use)
+
+        # Combine all features (62 total):
+        # OHLC (4) + Hurst (2) + ATR (1) + Price Features (18) + Deviation Features (23) = 48
+        # Wait, let me recount: 4+2+1+18+23 = 48, but we said 47...
+        # Actually: Original 24 + Deviation 23 = 47 ✓
+
+        # Debug: Check array sizes before stacking
+        n_bars = len(ohlc)
+        assert len(hurst_H_values) == n_bars, f"Hurst H mismatch: {len(hurst_H_values)} vs {n_bars}"
+        assert len(hurst_C_values) == n_bars, f"Hurst C mismatch: {len(hurst_C_values)} vs {n_bars}"
+        assert len(atr) == n_bars, f"ATR mismatch: {len(atr)} vs {n_bars}"
+
+        # Extract daily P&L features (normalized)
+        daily_pnl = df['dailyPnL'].values
+        daily_goal = df['dailyGoal'].values
+        daily_max_loss = df['dailyMaxLoss'].values
+
+        # Normalize P&L features
+        # 1. P&L as percentage of goal (-1 to +1 range, where 1 = goal reached)
+        pnl_pct_of_goal = np.zeros(n_bars)
+        for i in range(n_bars):
+            if daily_goal[i] > 0:
+                pnl_pct_of_goal[i] = daily_pnl[i] / daily_goal[i]
+            else:
+                pnl_pct_of_goal[i] = 0.0
+
+        # 2. P&L as percentage of max loss (-1 to +1 range, where -1 = max loss hit)
+        pnl_pct_of_loss = np.zeros(n_bars)
+        for i in range(n_bars):
+            if daily_max_loss[i] > 0:
+                pnl_pct_of_loss[i] = daily_pnl[i] / daily_max_loss[i]
+            else:
+                pnl_pct_of_loss[i] = 0.0
+
+        # 3. Risk headroom: how close to max loss (0 = at max loss, 1 = no loss)
+        risk_headroom = np.ones(n_bars)
+        for i in range(n_bars):
+            if daily_max_loss[i] > 0:
+                # If P&L is negative, calculate how much headroom remains
+                if daily_pnl[i] < 0:
+                    risk_headroom[i] = max(0.0, 1.0 + (daily_pnl[i] / daily_max_loss[i]))
+                else:
+                    risk_headroom[i] = 1.0  # Full headroom when profitable
+            else:
+                risk_headroom[i] = 1.0
+
         features = np.column_stack([
             ohlc,                                    # 4
             hurst_H_values,                          # 1
@@ -367,10 +711,55 @@ class TradingModel:
             price_features['position_in_range'],     # 1
             price_features['higher_highs'],          # 1
             price_features['lower_lows'],            # 1
-            price_features['trend_strength']         # 1
+            price_features['trend_strength'],        # 1
+            # Deviation features - 4 windows × 5 metrics = 20
+            price_features['mean_dev_5'],            # 1
+            price_features['mean_dev_10'],           # 1
+            price_features['mean_dev_20'],           # 1
+            price_features['mean_dev_50'],           # 1
+            price_features['median_dev_5'],          # 1
+            price_features['median_dev_10'],         # 1
+            price_features['median_dev_20'],         # 1
+            price_features['median_dev_50'],         # 1
+            price_features['std_dev_5'],             # 1
+            price_features['std_dev_10'],            # 1
+            price_features['std_dev_20'],            # 1
+            price_features['std_dev_50'],            # 1
+            price_features['z_score_5'],             # 1
+            price_features['z_score_10'],            # 1
+            price_features['z_score_20'],            # 1
+            price_features['z_score_50'],            # 1
+            price_features['bb_width_5'],            # 1
+            price_features['bb_width_10'],           # 1
+            price_features['bb_width_20'],           # 1
+            price_features['bb_width_50'],           # 1
+            # Additional deviation features: 3
+            price_features['vol_acceleration'],      # 1
+            price_features['high_deviation'],        # 1
+            price_features['low_deviation'],         # 1
+            # Daily P&L features: 3
+            pnl_pct_of_goal,                         # 1
+            pnl_pct_of_loss,                         # 1
+            risk_headroom,                           # 1
+            # Order flow features: 7
+            order_flow_features['delta'],            # 1
+            order_flow_features['cumulative_delta'], # 1
+            order_flow_features['volume_imbalance'], # 1
+            order_flow_features['aggressive_buy_ratio'], # 1
+            order_flow_features['volume_ratio'],     # 1
+            order_flow_features['delta_divergence'], # 1
+            order_flow_features['cumulative_delta_slope'], # 1
+            # Multi-timeframe features: 5
+            secondary_features['tf2_close'],         # 1
+            secondary_features['tf2_close_change'],  # 1
+            secondary_features['tf2_high_low_range'], # 1
+            secondary_features['tf2_volume'],        # 1
+            secondary_features['tf2_position_in_bar'] # 1
         ])
 
-        print(f"Total features: {features.shape[1]} (OHLC:4 + Hurst:2 + ATR:1 + Price:18)")
+        # Only log during training
+        if fit_scaler:
+            print(f"Total features: {features.shape[1]} (OHLC:4 + Hurst:2 + ATR:1 + Price:18 + Deviation:23 + DailyPnL:3 + OrderFlow:7 + MultiTF:5)")
 
         # Scale the features
         if fit_scaler:
@@ -408,8 +797,11 @@ class TradingModel:
         print("TRAINING RNN MODEL")
         print(f"{'='*50}")
 
-        # Prepare data with scaler fitting
-        X, y = self.prepare_data(df, fit_scaler=True)
+        # Extract OHLC for later use in metrics calculation
+        ohlc = df[['open', 'high', 'low', 'close']].values
+
+        # Prepare data with scaler fitting (multi-timeframe)
+        X, y = self.prepare_data(df, df_secondary=self.historical_data_secondary, fit_scaler=True)
         print(f"Total samples: {len(X)}")
         print(f"Sequence length: {self.sequence_length}")
 
@@ -465,7 +857,7 @@ class TradingModel:
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5, verbose=True
+            optimizer, mode='min', factor=0.5, patience=5
         )
 
         # Early stopping setup
@@ -519,11 +911,40 @@ class TradingModel:
             if (epoch + 1) % 10 == 0:
                 # Show prediction distribution
                 pred_dist = np.bincount(val_predictions, minlength=3)
+
+                # Calculate trading metrics (simulated returns based on predictions)
+                # Get the corresponding price changes for validation set
+                val_start_idx = len(X) - len(X_val)
+                val_price_changes = []
+                for i in range(val_start_idx, len(ohlc) - self.sequence_length):
+                    current_close = ohlc[i + self.sequence_length - 1, 3]
+                    future_close = ohlc[i + self.sequence_length, 3]
+                    price_change = (future_close - current_close) / current_close
+                    val_price_changes.append(price_change)
+
+                val_price_changes = np.array(val_price_changes)
+
+                # Pass daily P&L limits for realistic simulation
+                daily_pnl_config = {
+                    'dailyGoal': 500.0,  # Default daily goal
+                    'dailyMaxLoss': 250.0  # Default max loss
+                }
+                trading_metrics = evaluate_trading_performance(val_predictions, y_val, val_price_changes, daily_pnl_config)
+
                 print(f"Epoch [{epoch+1}/{epochs}]")
                 print(f"  Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}")
                 print(f"  Val Accuracy: {val_accuracy:.4f}, F1: {f1:.4f}")
                 print(f"  Precision: {precision:.4f}, Recall: {recall:.4f}")
                 print(f"  Predictions: Short={pred_dist[0]}, Hold={pred_dist[1]}, Long={pred_dist[2]}")
+                print(f"  Trading Metrics (with daily limits):")
+                print(f"    Sharpe Ratio: {trading_metrics['sharpe_ratio']:.4f}")
+                print(f"    Win Rate: {trading_metrics['win_rate']*100:.2f}%")
+                print(f"    Profit Factor: {trading_metrics['profit_factor']:.4f}")
+                print(f"    Expectancy: {trading_metrics['expectancy']:.6f}")
+                if trading_metrics['trades_stopped_by_goal'] > 0:
+                    print(f"    Stopped by goal: {trading_metrics['trades_stopped_by_goal']} times")
+                if trading_metrics['trades_stopped_by_loss'] > 0:
+                    print(f"    Stopped by loss: {trading_metrics['trades_stopped_by_loss']} times")
 
             # Early stopping
             if val_loss < best_val_loss:
@@ -542,6 +963,24 @@ class TradingModel:
         with torch.no_grad():
             val_outputs = self.model(X_val_tensor)
             val_predictions = torch.argmax(val_outputs, dim=1).cpu().numpy()
+
+            # Calculate final trading metrics
+            val_start_idx = len(X) - len(X_val)
+            val_price_changes = []
+            for i in range(val_start_idx, len(ohlc) - self.sequence_length):
+                current_close = ohlc[i + self.sequence_length - 1, 3]
+                future_close = ohlc[i + self.sequence_length, 3]
+                price_change = (future_close - current_close) / current_close
+                val_price_changes.append(price_change)
+
+            val_price_changes = np.array(val_price_changes)
+
+            # Pass daily P&L limits for realistic simulation
+            daily_pnl_config = {
+                'dailyGoal': 500.0,  # Default daily goal
+                'dailyMaxLoss': 250.0  # Default max loss
+            }
+            final_metrics = evaluate_trading_performance(val_predictions, y_val, val_price_changes, daily_pnl_config)
 
             print(f"\n{'='*50}")
             print("FINAL VALIDATION METRICS")
@@ -564,14 +1003,42 @@ class TradingModel:
             print(f"\nValidation set distribution: {dict(zip(unique_val, counts_val))}")
             print(f"Predictions distribution: {dict(zip(unique_pred, counts_pred))}")
 
+            # Print comprehensive trading metrics
+            print(f"\n{'='*50}")
+            print("TRADING PERFORMANCE METRICS (with daily limits)")
+            print(f"{'='*50}")
+            print(f"Sharpe Ratio:        {final_metrics['sharpe_ratio']:>8.4f}")
+            print(f"Sortino Ratio:       {final_metrics['sortino_ratio']:>8.4f}")
+            print(f"Profit Factor:       {final_metrics['profit_factor']:>8.4f}")
+            print(f"Win Rate:            {final_metrics['win_rate']*100:>7.2f}%")
+            print(f"Expectancy:          {final_metrics['expectancy']:>8.6f}")
+            print(f"Max Drawdown:        {final_metrics['max_drawdown']*100:>7.2f}%")
+            print(f"Total Return:        {final_metrics['total_return']*100:>7.2f}%")
+            print(f"Number of Trades:    {final_metrics['num_trades']:>8d}")
+            print(f"\nDaily Limit Events:")
+            print(f"Stopped by goal:     {final_metrics['trades_stopped_by_goal']:>8d} times")
+            print(f"Stopped by loss:     {final_metrics['trades_stopped_by_loss']:>8d} times")
+            print(f"{'='*50}")
+
         self.is_trained = True
+
+        # Compile model for faster inference after training (PyTorch 2.0+)
+        if not self.compiled:
+            try:
+                self.model = torch.compile(self.model)
+                self.compiled = True
+                print("Model compiled for optimized inference")
+            except Exception as e:
+                print(f"Model compilation not available: {e}")
+
         print(f"\n{'='*50}")
         print("MODEL TRAINING COMPLETE")
         print(f"{'='*50}\n")
 
+    @timing_decorator
     def predict(self, recent_bars_df):
         """
-        Predict trade signal for new bar
+        Predict trade signal for new bar (OPTIMIZED VERSION with fast path)
         Returns: (signal, confidence)
             signal: 'long', 'short', or 'hold'
             confidence: float between 0 and 1
@@ -580,20 +1047,33 @@ class TradingModel:
             print("WARNING: Model not trained yet!")
             return 'hold', 0.0
 
-        # Calculate current Hurst exponent for logging
-        current_hurst_H = 0.5
-        current_hurst_C = 1.0
-        if len(recent_bars_df) >= 100:
-            try:
-                prices = recent_bars_df['close'].tail(100).values
-                current_hurst_H, current_hurst_C = calculate_hurst_exponent(prices)
-            except Exception as e:
-                print(f"Warning: Could not calculate current Hurst: {e}")
+        # PERFORMANCE OPTIMIZATION: Use cached Hurst value (updated every 10 bars)
+        current_hurst_H = self._last_hurst_H
+        current_hurst_C = self._last_hurst_C
+
+        # CRITICAL PERFORMANCE FIX: Only process the LAST sequence_length + some buffer bars
+        # Instead of processing ALL historical data every time
+        min_bars_needed = self.sequence_length + 100  # +100 for Hurst calculation
+
+        if len(recent_bars_df) > min_bars_needed:
+            # Use only the most recent bars needed for prediction
+            df_subset = recent_bars_df.tail(min_bars_needed).reset_index(drop=True)
+            print(f"⚡ Fast path: Using {len(df_subset)} recent bars instead of {len(recent_bars_df)}")
+        else:
+            df_subset = recent_bars_df
+
+        # Prepare secondary timeframe data (if available)
+        df_secondary_subset = None
+        if self.historical_data_secondary is not None and len(self.historical_data_secondary) > 0:
+            # Use same subset strategy for secondary data
+            if len(self.historical_data_secondary) > min_bars_needed:
+                df_secondary_subset = self.historical_data_secondary.tail(min_bars_needed).reset_index(drop=True)
+            else:
+                df_secondary_subset = self.historical_data_secondary
 
         # Validate and prepare data (without fitting scaler)
         try:
-            # Need full historical data for Hurst calculation
-            X, _ = self.prepare_data(recent_bars_df, fit_scaler=False)
+            X, _ = self.prepare_data(df_subset, df_secondary=df_secondary_subset, fit_scaler=False)
 
             if len(X) == 0:
                 print(f"WARNING: Need at least {self.sequence_length + 1} bars for prediction")
@@ -606,13 +1086,20 @@ class TradingModel:
             print(f"ERROR preparing prediction data: {e}")
             return 'hold', 0.0
 
-        # Convert to tensor
-        X_tensor = torch.FloatTensor(last_sequence).to(self.device)
+        # PERFORMANCE OPTIMIZATION: Use FP16 for faster inference on GPU
+        X_tensor = torch.FloatTensor(last_sequence)
+        if self.device.type == 'cuda':
+            X_tensor = X_tensor.half().to(self.device)  # FP16 on GPU
+        else:
+            X_tensor = X_tensor.to(self.device)  # FP32 on CPU
 
-        # Predict
+        # Predict with inference mode (faster than no_grad)
         self.model.eval()
-        with torch.no_grad():
+        with torch.inference_mode():  # Faster than no_grad()
             outputs = self.model(X_tensor)
+            if self.device.type == 'cuda':
+                outputs = outputs.float()  # Convert back to FP32 for softmax
+
             probabilities = torch.softmax(outputs, dim=1)[0]
 
             # Get predicted class and confidence
@@ -623,7 +1110,11 @@ class TradingModel:
         signal_map = {0: 'short', 1: 'hold', 2: 'long'}
         signal = signal_map[predicted_class]
 
-        # Log Hurst values with prediction
+        # Log Hurst values and P&L context with prediction
+        current_pnl = recent_bars_df['dailyPnL'].iloc[-1] if 'dailyPnL' in recent_bars_df.columns else 0.0
+        current_goal = recent_bars_df['dailyGoal'].iloc[-1] if 'dailyGoal' in recent_bars_df.columns else 0.0
+        current_max_loss = recent_bars_df['dailyMaxLoss'].iloc[-1] if 'dailyMaxLoss' in recent_bars_df.columns else 0.0
+
         print(f"\n--- Prediction Context ---")
         print(f"Current Hurst H: {current_hurst_H:.4f} ", end="")
         if current_hurst_H > 0.5:
@@ -633,6 +1124,11 @@ class TradingModel:
         else:
             print("(RANDOM WALK)")
         print(f"Current Hurst C: {current_hurst_C:.4f}")
+        print(f"Daily P&L: ${current_pnl:.2f} (Goal: ${current_goal:.2f}, Max Loss: -${current_max_loss:.2f})")
+        if current_goal > 0:
+            print(f"P&L Progress: {(current_pnl / current_goal * 100):.1f}% of goal")
+        if current_max_loss > 0 and current_pnl < 0:
+            print(f"Risk Used: {(abs(current_pnl) / current_max_loss * 100):.1f}% of max loss")
         print(f"Predicted Signal: {signal.upper()}")
         print(f"Confidence: {confidence:.4f} ({confidence*100:.2f}%)")
         print(f"-------------------------\n")
@@ -695,23 +1191,59 @@ class TradingModel:
 
             print(f"Model loaded from {path}")
             print(f"Signal threshold: {self.signal_threshold:.4f}%")
+
+            # Compile model for faster inference after successful load
+            if not self.compiled:
+                try:
+                    self.model = torch.compile(self.model)
+                    self.compiled = True
+                    print("Model compiled for optimized inference")
+                except Exception as e:
+                    print(f"Model compilation not available: {e}")
+
+            # PERFORMANCE OPTIMIZATION: Apply dynamic quantization for CPU inference
+            # Only quantize if model is trained (has parameters)
+            if self.device.type == 'cpu' and self.is_trained:
+                try:
+                    # Store original model for potential retraining
+                    self._original_model = self.model
+                    self.model = torch.quantization.quantize_dynamic(
+                        self.model,
+                        {torch.nn.LSTM, torch.nn.Linear},  # Quantize LSTM and Linear layers
+                        dtype=torch.qint8
+                    )
+                    print("✓ Model quantized to INT8 for faster CPU inference")
+                except Exception as e:
+                    print(f"Note: Quantization not applied: {e}")
+
             return True
 
         except Exception as e:
             print(f"Error loading model: {e}")
             return False
 
-    def update_historical_data(self, df):
-        """Update historical data storage"""
+    def update_historical_data(self, df, df_secondary=None):
+        """Update historical data storage (multi-timeframe support)"""
+        # Update primary timeframe
         if self.historical_data is None:
             self.historical_data = df.copy()
         else:
             self.historical_data = pd.concat([self.historical_data, df], ignore_index=True)
 
         # Keep only recent data to prevent memory issues (e.g., last 50,000 bars)
-        # At 1-min bars: 50k bars = ~35 days, 5-min bars = ~6 months, daily bars = ~137 years
         if len(self.historical_data) > 50000:
             self.historical_data = self.historical_data.tail(50000).reset_index(drop=True)
+
+        # Update secondary timeframe if provided
+        if df_secondary is not None:
+            if self.historical_data_secondary is None:
+                self.historical_data_secondary = df_secondary.copy()
+            else:
+                self.historical_data_secondary = pd.concat([self.historical_data_secondary, df_secondary], ignore_index=True)
+
+            # Keep only recent secondary data
+            if len(self.historical_data_secondary) > 10000:
+                self.historical_data_secondary = self.historical_data_secondary.tail(10000).reset_index(drop=True)
 
         return self.historical_data
 
