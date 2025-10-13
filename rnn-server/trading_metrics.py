@@ -1,6 +1,119 @@
 import numpy as np
 import pandas as pd
-from typing import List, Tuple
+from typing import List, Tuple, Dict
+
+
+def calculate_transaction_costs(
+    num_trades: int,
+    commission_per_contract: float = 2.50,
+    spread_ticks: int = 1,
+    tick_value: float = 12.50,
+    contracts_per_trade: float = 1.0
+) -> Dict[str, float]:
+    """
+    Calculate realistic transaction costs for futures trading
+
+    Args:
+        num_trades: Number of round-trip trades
+        commission_per_contract: Commission per contract per round-trip ($)
+        spread_ticks: Bid-ask spread in ticks (1-2 for ES)
+        tick_value: Dollar value per tick ($12.50 for ES)
+        contracts_per_trade: Average contracts per trade
+
+    Returns:
+        Dictionary with cost breakdown
+    """
+    # Commission costs (charged per round-trip)
+    commission_total = num_trades * commission_per_contract * contracts_per_trade
+
+    # Spread costs (crossing spread on entry and exit)
+    # Entry: pay ask (half spread)
+    # Exit: pay bid (half spread)
+    # Total: full spread per round-trip
+    spread_cost_per_trade = spread_ticks * tick_value * contracts_per_trade
+    spread_total = num_trades * spread_cost_per_trade
+
+    # Slippage (additional 0.5-1 tick assumed per side)
+    slippage_ticks_per_side = 0.75  # Conservative estimate
+    slippage_cost_per_trade = slippage_ticks_per_side * 2 * tick_value * contracts_per_trade
+    slippage_total = num_trades * slippage_cost_per_trade
+
+    # Total costs
+    total_costs = commission_total + spread_total + slippage_total
+    cost_per_trade = total_costs / max(num_trades, 1)
+
+    return {
+        'commission_total': commission_total,
+        'spread_total': spread_total,
+        'slippage_total': slippage_total,
+        'total_costs': total_costs,
+        'cost_per_trade': cost_per_trade,
+        'commission_pct': commission_total / total_costs if total_costs > 0 else 0,
+        'spread_pct': spread_total / total_costs if total_costs > 0 else 0,
+        'slippage_pct': slippage_total / total_costs if total_costs > 0 else 0
+    }
+
+
+def apply_transaction_costs_to_returns(
+    gross_returns: np.ndarray,
+    commission_per_trade: float = 2.50,
+    spread_cost_per_trade: float = 12.50,
+    slippage_cost_per_trade: float = 18.75,
+    notional_per_contract: float = 225000.0  # ES @ 4500 * 50
+) -> np.ndarray:
+    """
+    Apply transaction costs to gross returns to get net returns
+
+    Args:
+        gross_returns: Array of gross returns (as decimals, e.g., 0.01 = 1%)
+        commission_per_trade: Commission in dollars
+        spread_cost_per_trade: Spread cost in dollars
+        slippage_cost_per_trade: Slippage cost in dollars
+        notional_per_contract: Notional value per contract
+
+    Returns:
+        Net returns after costs
+    """
+    # Total cost per trade in dollars
+    total_cost_per_trade = commission_per_trade + spread_cost_per_trade + slippage_cost_per_trade
+
+    # Convert dollar cost to percentage of notional
+    cost_as_pct = total_cost_per_trade / notional_per_contract
+
+    # Subtract costs from returns
+    net_returns = gross_returns - cost_as_pct
+
+    return net_returns
+
+
+def calculate_break_even_win_rate(
+    avg_win: float,
+    avg_loss: float,
+    transaction_cost_per_trade: float = 40.0
+) -> float:
+    """
+    Calculate the minimum win rate needed to break even after costs
+
+    Args:
+        avg_win: Average winning trade size ($)
+        avg_loss: Average losing trade size ($, positive number)
+        transaction_cost_per_trade: Total transaction costs per trade ($)
+
+    Returns:
+        Break-even win rate (0-1)
+    """
+    # Adjust for transaction costs
+    net_avg_win = avg_win - transaction_cost_per_trade
+    net_avg_loss = avg_loss + transaction_cost_per_trade
+
+    if net_avg_win <= 0:
+        return 1.0  # Need 100% win rate if costs eat all wins
+
+    # Break-even: win_rate * net_avg_win = (1 - win_rate) * net_avg_loss
+    # Solving: win_rate = net_avg_loss / (net_avg_win + net_avg_loss)
+    breakeven_wr = net_avg_loss / (net_avg_win + net_avg_loss)
+
+    return min(1.0, max(0.0, breakeven_wr))
 
 def calculate_sharpe_ratio(returns: np.ndarray, risk_free_rate: float = 0.0, periods_per_year: int = 252) -> float:
     """
@@ -45,7 +158,7 @@ def calculate_profit_factor(returns: np.ndarray) -> float:
     gross_loss = abs(np.sum(returns[returns < 0]))
 
     if gross_loss == 0:
-        return float('inf') if gross_profit > 0 else 0.0
+        return 999.99 if gross_profit > 0 else 0.0  # Cap at 999.99 instead of inf
 
     return gross_profit / gross_loss
 
@@ -138,7 +251,7 @@ def calculate_sortino_ratio(returns: np.ndarray, target_return: float = 0.0, per
     downside_returns = excess_returns[excess_returns < 0]
 
     if len(downside_returns) == 0:
-        return float('inf') if np.mean(excess_returns) > 0 else 0.0
+        return 999.99 if np.mean(excess_returns) > 0 else 0.0  # Cap at 999.99 instead of inf
 
     downside_std = np.std(downside_returns)
 

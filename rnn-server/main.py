@@ -5,14 +5,23 @@ import pandas as pd
 from datetime import datetime
 from model import TradingModel
 import asyncio
+import math
 
 app = FastAPI()
+
+def sanitize_float(value):
+    """Convert inf/nan to valid JSON numbers"""
+    if math.isnan(value) or math.isinf(value):
+        return 0.0
+    return float(value)
 
 # Initialize model instance (replaces global state)
 trading_model = TradingModel(sequence_length=20)
 
 # Confidence threshold for predictions (only trade high-confidence signals)
-MIN_CONFIDENCE_THRESHOLD = 0.65  # 65% minimum confidence
+# EMERGENCY MODE: Reduced to 0.40 because model was trained with 40% HOLD bias
+# This compensates for the inherent conservatism in the trained model
+MIN_CONFIDENCE_THRESHOLD = 0.40  # 40% minimum (was 0.65 -> 0.55 -> now 0.40)
 
 # Track training status
 training_status = {
@@ -282,24 +291,46 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
         # Update historical data (both timeframes)
         current_data = trading_model.update_historical_data(new_bar, new_bar_secondary)
 
-        # Make prediction
+        # Make prediction with risk management parameters
         try:
-            signal, confidence = trading_model.predict(current_data)
+            # Get account balance from request (default to $25,000)
+            account_balance = request.get('accountBalance', 25000.0)
 
-            # Apply confidence threshold filtering
+            # Get full trade parameters with risk management
+            trade_params = trading_model.predict_with_risk_params(
+                current_data,
+                account_balance=account_balance
+            )
+
+            signal = trade_params['signal']
+            confidence = trade_params['confidence']
+
+            # Apply confidence threshold filtering (for backward compatibility)
             filtered_signal = signal
             if confidence < MIN_CONFIDENCE_THRESHOLD:
                 filtered_signal = "hold"
                 print(f"\n⚠️  Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()} → HOLD")
 
             print("\n" + "="*50)
-            print("PREDICTION")
+            print("PREDICTION WITH RISK PARAMETERS")
             print("="*50)
             print(f"Raw Signal: {signal.upper()}")
             print(f"Confidence: {confidence:.4f} ({confidence*100:.2f}%)")
             print(f"Final Signal: {filtered_signal.upper()}")
             if filtered_signal != signal:
                 print(f"(Filtered due to low confidence < {MIN_CONFIDENCE_THRESHOLD*100:.0f}%)")
+
+            # Log risk management parameters
+            if trade_params['contracts'] > 0:
+                print(f"\n📊 RISK MANAGEMENT PARAMETERS:")
+                print(f"  Contracts: {trade_params['contracts']}")
+                print(f"  Entry Price: ${trade_params['entry_price']:.2f}")
+                print(f"  Stop Loss: ${trade_params['stop_loss']:.2f}")
+                print(f"  Take Profit: ${trade_params['take_profit']:.2f}")
+                print(f"  Risk/Reward: {trade_params.get('risk_reward', 0):.2f}")
+                print(f"  Dollar Risk: ${trade_params.get('risk_dollars', 0):.2f}")
+                print(f"  Risk %: {trade_params.get('risk_pct', 0)*100:.2f}%")
+
             print("="*50 + "\n")
 
             return {
@@ -308,15 +339,30 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 "data_type": request.get('type', 'unknown'),
                 "signal": filtered_signal,
                 "raw_signal": signal,
-                "confidence": confidence,
+                "confidence": sanitize_float(confidence),
                 "confidence_threshold": MIN_CONFIDENCE_THRESHOLD,
                 "filtered": filtered_signal != signal,
-                "recommendation": f"{filtered_signal.upper()} with {confidence*100:.1f}% confidence" +
-                                 (f" (filtered from {signal.upper()})" if filtered_signal != signal else "")
+                "recommendation": f"{filtered_signal.upper()} with {sanitize_float(confidence)*100:.1f}% confidence" +
+                                 (f" (filtered from {signal.upper()})" if filtered_signal != signal else ""),
+                # Risk management parameters
+                "risk_management": {
+                    "contracts": trade_params['contracts'],
+                    "entry_price": sanitize_float(trade_params['entry_price']),
+                    "stop_loss": sanitize_float(trade_params['stop_loss']),
+                    "take_profit": sanitize_float(trade_params['take_profit']),
+                    "stop_distance": sanitize_float(trade_params.get('stop_distance', 0)),
+                    "target_distance": sanitize_float(trade_params.get('target_distance', 0)),
+                    "risk_reward_ratio": sanitize_float(trade_params.get('risk_reward', 0)),
+                    "risk_dollars": sanitize_float(trade_params.get('risk_dollars', 0)),
+                    "risk_pct": sanitize_float(trade_params.get('risk_pct', 0)),
+                    "regime": trade_params.get('regime', 'unknown')
+                }
             }
 
         except Exception as e:
             print(f"Prediction error: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "status": "error",
                 "message": f"Prediction failed: {e}",

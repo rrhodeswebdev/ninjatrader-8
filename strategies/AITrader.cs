@@ -24,7 +24,7 @@ namespace NinjaTrader.NinjaScript.Strategies
     public class AITrader : Strategy
     {
         private HttpClient httpClient;
-        private string serverUrl = "https://df6159faef89.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
+        private string serverUrl = "https://2f73a7f4d7fe.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
         private bool historicalDataSent = false;
         private int historicalBarsToSend = 2000; // Configurable parameter (1 week of 1-min bars)
 
@@ -499,7 +499,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print("WARNING: Secondary timeframe (5-min) not available yet!");
             }
 
-            jsonBuilder.Append("],\"type\":\"historical\"}");
+            jsonBuilder.AppendFormat("],\"type\":\"historical\",\"dailyGoal\":{0},\"dailyMaxLoss\":{1}}}",
+                dailyProfitGoal,
+                dailyMaxLoss);
             string jsonData = jsonBuilder.ToString();
 
             Print("SENDING HISTORICAL DATA (" + barCount + " bars)");
@@ -559,6 +561,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 barVolume5min = Volumes[1][0];
             }
 
+            // Get current account balance from NinjaTrader
+            double accountBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+
             Task.Run(async () =>
             {
                 try
@@ -566,7 +571,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     string json;
                     if (hasSecondaryData)
                     {
-                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14}}}",
+                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14},\"accountBalance\":{15}}}",
                         barTime,
                         barOpen,
                         barHigh,
@@ -581,12 +586,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                         barVolume5min,
                         dailyPnL,
                         dailyProfitGoal,
-                        dailyMaxLoss);
+                        dailyMaxLoss,
+                        accountBalance);
                     }
                     else
                     {
                         // Legacy format without secondary data
-                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8}}}",
+                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8},\"accountBalance\":{9}}}",
                             barTime,
                             barOpen,
                             barHigh,
@@ -595,7 +601,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             barVolume,
                             dailyPnL,
                             dailyProfitGoal,
-                            dailyMaxLoss);
+                            dailyMaxLoss,
+                            accountBalance);
                     }
 
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
