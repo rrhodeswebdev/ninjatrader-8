@@ -1,0 +1,143 @@
+name: Build RNN Server Executables
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build:
+    name: Build Windows Executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: |
+          irm https://astral.sh/uv/install.ps1 | iex
+          echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Add uv to PATH
+        run: echo "$env:USERPROFILE\.cargo\bin" >> $env:GITHUB_PATH
+        shell: pwsh
+
+      - name: Install dependencies
+        run: |
+          cd rnn-server
+          uv sync
+          uv add nuitka ordered-set zstandard
+
+      - name: Build executable
+        run: |
+          cd rnn-server
+          .\build_executable.bat
+        shell: cmd
+
+      - name: Verify executable exists
+        run: |
+          if (Test-Path "rnn-server\dist\server_app.dist\rnn-server.exe") {
+            Write-Host "✓ Executable found"
+            Get-Item "rnn-server\dist\server_app.dist\rnn-server.exe" | Select-Object Name, Length
+          } else {
+            Write-Error "Executable not found!"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Create archive
+        run: |
+          cd rnn-server\dist
+          Compress-Archive -Path server_app.dist -DestinationPath rnn-server-windows.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rnn-server-windows
+          path: rnn-server/dist/rnn-server-windows.zip
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rnn-server-windows
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/rnn-server-windows.zip
+          body: |
+            # RNN Trading Server Release
+
+            ## Download
+
+            **Windows:** `rnn-server-windows.zip`
+
+            ## Installation
+
+            1. Download `rnn-server-windows.zip`
+            2. Extract the zip file
+            3. Navigate to `server_app.dist` folder
+            4. Run the executable:
+               - **Double-click** `rnn-server.exe`
+               - **OR from Command Prompt:** `rnn-server.exe`
+
+            ## Usage
+
+            The server will start on `http://127.0.0.1:8000`
+
+            - **Health check:** `http://127.0.0.1:8000/health-check`
+            - **API docs:** `http://127.0.0.1:8000/docs`
+            - **Analysis endpoint:** `http://127.0.0.1:8000/analysis`
+
+            ## Configuration
+
+            Set environment variables to customize:
+
+            - `PORT` - Server port (default: 8000)
+            - `HOST` - Server host (default: 127.0.0.1)
+
+            **Example:**
+            ```cmd
+            set PORT=8080
+            rnn-server.exe
+            ```
+
+            ## Requirements
+
+            - **Windows 10 or later**
+            - **No Python or dependencies needed!** Everything is included.
+
+            ## Stopping the Server
+
+            Press `Ctrl+C` in the command prompt window where the server is running.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
