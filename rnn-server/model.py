@@ -1765,19 +1765,26 @@ class TradingModel:
             prob_hold = probabilities[1].item()
             prob_long = probabilities[2].item()
 
-            # Determine signal by comparing directional probabilities
-            # Only trade if directional conviction exceeds HOLD by a margin
-            direction_margin = 0.02  # Need 2% edge over hold to trade (reduced from 5%)
+            # NEW APPROACH: Use simple argmax but normalize directional conviction
+            # This increases signal frequency while maintaining quality via confidence threshold
+            # Calculate directional edge: how much stronger is the best direction vs the other?
+            directional_edge = abs(prob_long - prob_short)
 
-            if prob_long > prob_hold + direction_margin and prob_long > prob_short:
+            # Determine signal by simple comparison (no direction margin)
+            if prob_long > prob_short and prob_long > prob_hold:
                 predicted_class = 2  # Long
                 confidence = prob_long
-            elif prob_short > prob_hold + direction_margin and prob_short > prob_long:
+            elif prob_short > prob_long and prob_short > prob_hold:
                 predicted_class = 0  # Short
                 confidence = prob_short
             else:
                 predicted_class = 1  # Hold
                 confidence = prob_hold
+
+            # Quality gate: Boost confidence only if directional edge is strong
+            # This rewards clear directional conviction without filtering signals
+            if predicted_class in [0, 2] and directional_edge > 0.10:  # 10% edge between directions
+                confidence = min(1.0, confidence * 1.15)  # 15% confidence boost for clear direction
 
             # Handle NaN/inf in confidence
             if not isinstance(confidence, (int, float)) or math.isnan(confidence) or math.isinf(confidence):
@@ -1786,6 +1793,7 @@ class TradingModel:
 
             # Log all probabilities for debugging
             print(f"Probabilities: SHORT={prob_short:.3f}, HOLD={prob_hold:.3f}, LONG={prob_long:.3f}")
+            print(f"Directional Edge: {directional_edge:.3f} ({'Strong' if directional_edge > 0.10 else 'Weak'})")
 
             # Extract and log attention weights (which bars model focuses on)
             # Attention weights shape: (batch, num_heads, seq_len, seq_len)
@@ -1871,6 +1879,116 @@ class TradingModel:
         print(f"-------------------------\n")
 
         return signal, confidence
+
+    def detect_early_exit(self, recent_bars_df, current_position: str, entry_price: float):
+        """
+        Detect early exit conditions before waiting for HOLD signal
+
+        Args:
+            recent_bars_df: Recent bar data
+            current_position: 'long' or 'short'
+            entry_price: Entry price of current position
+
+        Returns:
+            Dictionary with:
+                - should_exit: bool
+                - reason: str (why to exit)
+                - urgency: str ('immediate', 'normal', 'none')
+        """
+        if current_position not in ['long', 'short']:
+            return {'should_exit': False, 'reason': 'No position', 'urgency': 'none'}
+
+        current_bar = recent_bars_df.iloc[-1]
+        current_price = current_bar['close']
+
+        # Calculate position P&L
+        if current_position == 'long':
+            pnl_points = current_price - entry_price
+        else:  # short
+            pnl_points = entry_price - current_price
+
+        # Get probabilities for the current bar
+        signal, confidence = self.predict(recent_bars_df)
+
+        # Get model probabilities directly (need to call model again for internal probs)
+        try:
+            X, _ = self.prepare_data(recent_bars_df.tail(self.sequence_length + 100), fit_scaler=False)
+            if len(X) > 0:
+                last_sequence = X[-1:]
+                X_tensor = torch.FloatTensor(last_sequence).to(self.device)
+                self.model.eval()
+                with torch.inference_mode():
+                    outputs, _ = self.model(X_tensor, return_attention=True)
+                    probabilities = torch.softmax(outputs, dim=1)[0]
+                    prob_short = probabilities[0].item()
+                    prob_hold = probabilities[1].item()
+                    prob_long = probabilities[2].item()
+            else:
+                prob_short, prob_hold, prob_long = 0.33, 0.34, 0.33
+        except:
+            prob_short, prob_hold, prob_long = 0.33, 0.34, 0.33
+
+        # EXIT CONDITION 1: Opposite direction signal with high confidence
+        if current_position == 'long' and signal == 'short' and confidence > 0.35:
+            return {
+                'should_exit': True,
+                'reason': f'Strong SHORT signal ({confidence*100:.1f}%) against LONG position',
+                'urgency': 'immediate'
+            }
+        elif current_position == 'short' and signal == 'long' and confidence > 0.35:
+            return {
+                'should_exit': True,
+                'reason': f'Strong LONG signal ({confidence*100:.1f}%) against SHORT position',
+                'urgency': 'immediate'
+            }
+
+        # EXIT CONDITION 2: Confidence collapse (model uncertainty)
+        # If we're in a position and HOLD probability spikes above 50%
+        if prob_hold > 0.50:
+            return {
+                'should_exit': True,
+                'reason': f'High HOLD probability ({prob_hold*100:.1f}%) - model uncertain',
+                'urgency': 'normal'
+            }
+
+        # EXIT CONDITION 3: Directional probability reversal
+        # Long position but SHORT probability exceeds LONG probability
+        if current_position == 'long' and prob_short > prob_long + 0.05:
+            return {
+                'should_exit': True,
+                'reason': f'Directional reversal: SHORT prob ({prob_short*100:.1f}%) > LONG prob ({prob_long*100:.1f}%)',
+                'urgency': 'normal'
+            }
+        elif current_position == 'short' and prob_long > prob_short + 0.05:
+            return {
+                'should_exit': True,
+                'reason': f'Directional reversal: LONG prob ({prob_long*100:.1f}%) > SHORT prob ({prob_short*100:.1f}%)',
+                'urgency': 'normal'
+            }
+
+        # EXIT CONDITION 4: Momentum loss
+        # Check if recent bars show momentum reversal (last 3 bars)
+        if len(recent_bars_df) >= 3:
+            last_3_closes = recent_bars_df['close'].tail(3).values
+            if current_position == 'long':
+                # Check for lower highs
+                if last_3_closes[-1] < last_3_closes[-2] < last_3_closes[-3]:
+                    return {
+                        'should_exit': True,
+                        'reason': 'Momentum loss: 3 consecutive lower closes in LONG',
+                        'urgency': 'normal'
+                    }
+            else:  # short
+                # Check for higher lows
+                if last_3_closes[-1] > last_3_closes[-2] > last_3_closes[-3]:
+                    return {
+                        'should_exit': True,
+                        'reason': 'Momentum loss: 3 consecutive higher closes in SHORT',
+                        'urgency': 'normal'
+                    }
+
+        # No exit conditions met
+        return {'should_exit': False, 'reason': 'Position looks good', 'urgency': 'none'}
 
     def predict_with_risk_params(
         self,

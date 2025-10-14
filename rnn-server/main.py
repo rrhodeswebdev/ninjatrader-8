@@ -16,12 +16,15 @@ def sanitize_float(value):
     return float(value)
 
 # Initialize model instance (replaces global state)
-trading_model = TradingModel(sequence_length=20)
+# REDUCED SEQUENCE LENGTH: 12 bars instead of 20 for faster reaction to price changes
+trading_model = TradingModel(sequence_length=12)
 
 # Confidence threshold for predictions (only trade high-confidence signals)
-# EMERGENCY MODE: Reduced to 0.40 because model was trained with 40% HOLD bias
-# This compensates for the inherent conservatism in the trained model
-MIN_CONFIDENCE_THRESHOLD = 0.40  # 40% minimum (was 0.65 -> 0.55 -> now 0.40)
+# EMERGENCY MODE: Reduced to 0.25 to increase signal frequency
+# Combined with new directional edge logic (removed direction_margin filter)
+# This allows more signals through while confidence boost rewards quality
+# FURTHER REDUCED for more trading signals (was 0.65 -> 0.55 -> 0.40 -> 0.30 -> now 0.25)
+MIN_CONFIDENCE_THRESHOLD = 0.25  # 25% minimum
 
 # Track training status
 training_status = {
@@ -66,6 +69,11 @@ class RealtimeRequest(BaseModel):
     dailyPnL: Optional[float] = 0.0
     dailyGoal: Optional[float] = 0.0
     dailyMaxLoss: Optional[float] = 0.0
+
+    # Position information for exit analysis
+    current_position: Optional[str] = "flat"  # "flat", "long", or "short"
+    entry_price: Optional[float] = 0.0
+    position_quantity: Optional[int] = 0
 
 @app.get("/")
 def read_root():
@@ -311,6 +319,25 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 filtered_signal = "hold"
                 print(f"\n⚠️  Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()} → HOLD")
 
+            # Check for exit conditions if in a position
+            exit_analysis = {'should_exit': False, 'reason': 'No position', 'urgency': 'none'}
+            current_position = request.get('current_position', 'flat')
+            entry_price = request.get('entry_price', 0.0)
+
+            if current_position in ['long', 'short'] and entry_price > 0:
+                exit_analysis = trading_model.detect_early_exit(
+                    current_data,
+                    current_position,
+                    entry_price
+                )
+
+                # If exit detected, override signal to HOLD (to trigger exit)
+                if exit_analysis['should_exit']:
+                    filtered_signal = "hold"
+                    print(f"\n🚨 EARLY EXIT DETECTED 🚨")
+                    print(f"Reason: {exit_analysis['reason']}")
+                    print(f"Urgency: {exit_analysis['urgency'].upper()}")
+
             print("\n" + "="*50)
             print("PREDICTION WITH RISK PARAMETERS")
             print("="*50)
@@ -318,7 +345,10 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             print(f"Confidence: {confidence:.4f} ({confidence*100:.2f}%)")
             print(f"Final Signal: {filtered_signal.upper()}")
             if filtered_signal != signal:
-                print(f"(Filtered due to low confidence < {MIN_CONFIDENCE_THRESHOLD*100:.0f}%)")
+                if exit_analysis['should_exit']:
+                    print(f"(Overridden to HOLD due to exit condition)")
+                else:
+                    print(f"(Filtered due to low confidence < {MIN_CONFIDENCE_THRESHOLD*100:.0f}%)")
 
             # Log risk management parameters
             if trade_params['contracts'] > 0:
@@ -356,6 +386,12 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                     "risk_dollars": sanitize_float(trade_params.get('risk_dollars', 0)),
                     "risk_pct": sanitize_float(trade_params.get('risk_pct', 0)),
                     "regime": trade_params.get('regime', 'unknown')
+                },
+                # Exit analysis (NEW!)
+                "exit_analysis": {
+                    "should_exit": exit_analysis['should_exit'],
+                    "reason": exit_analysis['reason'],
+                    "urgency": exit_analysis['urgency']
                 }
             }
 

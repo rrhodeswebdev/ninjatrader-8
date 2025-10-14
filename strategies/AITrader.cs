@@ -45,6 +45,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         // Track desired position for reversals
         private string desiredPosition = "flat";  // "flat", "long", or "short"
+        private double desiredStopLoss = 0.0;  // SL for delayed entry
+        private double desiredTakeProfit = 0.0;  // TP for delayed entry
 
         // Chart Trader UI elements
         private Chart chartWindow;
@@ -348,20 +350,44 @@ namespace NinjaTrader.NinjaScript.Strategies
                 if (desiredPosition == "long" && allowLongTrades && tradingEnabled)
                 {
                     Print("Position now FLAT - Entering LONG as desired");
+                    Print("  Stop Loss: " + desiredStopLoss.ToString("F2") + ", Take Profit: " + desiredTakeProfit.ToString("F2"));
+
+                    // Set SL/TP if available
+                    if (desiredStopLoss > 0 && desiredTakeProfit > 0)
+                    {
+                        SetStopLoss("AILong", CalculationMode.Price, desiredStopLoss, false);
+                        SetProfitTarget("AILong", CalculationMode.Price, desiredTakeProfit);
+                    }
+
                     desiredPosition = "flat";
+                    desiredStopLoss = 0.0;
+                    desiredTakeProfit = 0.0;
                     isLongOrderPending = true;
                     EnterLong(1, "AILong");
                 }
                 else if (desiredPosition == "short" && allowShortTrades && tradingEnabled)
                 {
                     Print("Position now FLAT - Entering SHORT as desired");
+                    Print("  Stop Loss: " + desiredStopLoss.ToString("F2") + ", Take Profit: " + desiredTakeProfit.ToString("F2"));
+
+                    // Set SL/TP if available
+                    if (desiredStopLoss > 0 && desiredTakeProfit > 0)
+                    {
+                        SetStopLoss("AIShort", CalculationMode.Price, desiredStopLoss, false);
+                        SetProfitTarget("AIShort", CalculationMode.Price, desiredTakeProfit);
+                    }
+
                     desiredPosition = "flat";
+                    desiredStopLoss = 0.0;
+                    desiredTakeProfit = 0.0;
                     isShortOrderPending = true;
                     EnterShort(1, "AIShort");
                 }
                 else
                 {
                     desiredPosition = "flat";
+                    desiredStopLoss = 0.0;
+                    desiredTakeProfit = 0.0;
                 }
             }
         }
@@ -564,6 +590,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Get current account balance from NinjaTrader
             double accountBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
 
+            // Get current position information for exit analysis
+            string currentPosition = Position.MarketPosition == MarketPosition.Long ? "long" :
+                                    Position.MarketPosition == MarketPosition.Short ? "short" : "flat";
+            double entryPrice = Position.AveragePrice;
+            int positionQuantity = Position.Quantity;
+
             Task.Run(async () =>
             {
                 try
@@ -571,7 +603,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     string json;
                     if (hasSecondaryData)
                     {
-                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14},\"accountBalance\":{15}}}",
+                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14},\"accountBalance\":{15},\"current_position\":\"{16}\",\"entry_price\":{17},\"position_quantity\":{18}}}",
                         barTime,
                         barOpen,
                         barHigh,
@@ -587,12 +619,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                         dailyPnL,
                         dailyProfitGoal,
                         dailyMaxLoss,
-                        accountBalance);
+                        accountBalance,
+                        currentPosition,
+                        entryPrice,
+                        positionQuantity);
                     }
                     else
                     {
                         // Legacy format without secondary data
-                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8},\"accountBalance\":{9}}}",
+                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8},\"accountBalance\":{9},\"current_position\":\"{10}\",\"entry_price\":{11},\"position_quantity\":{12}}}",
                             barTime,
                             barOpen,
                             barHigh,
@@ -602,7 +637,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                             dailyPnL,
                             dailyProfitGoal,
                             dailyMaxLoss,
-                            accountBalance);
+                            accountBalance,
+                            currentPosition,
+                            entryPrice,
+                            positionQuantity);
                     }
 
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -621,6 +659,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                             string signal = result.signal.ToString().ToLower();
                             double confidence = (double)result.confidence;
 
+                            // Extract risk management parameters from server response
+                            double stopLoss = 0.0;
+                            double takeProfit = 0.0;
+
+                            if (result.risk_management != null)
+                            {
+                                stopLoss = (double)result.risk_management.stop_loss;
+                                takeProfit = (double)result.risk_management.take_profit;
+
+                                Print("Risk Management - SL: " + stopLoss.ToString("F2") + ", TP: " + takeProfit.ToString("F2"));
+                            }
+
                             // Update dashboard state
                             lastSignal = signal;
                             lastConfidence = confidence;
@@ -637,7 +687,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                             Print("AI Signal: " + signal.ToUpper() + " (" + (confidence * 100).ToString("F2") + "%)");
 
                             // Execute trades based on signal and trading settings
-                            ExecuteTradeSignal(signal, confidence);
+                            ExecuteTradeSignal(signal, confidence, stopLoss, takeProfit);
                         }
                     }
                     else
@@ -652,7 +702,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             });
         }
 
-        private void ExecuteTradeSignal(string signal, double confidence)
+        private void ExecuteTradeSignal(string signal, double confidence, double stopLoss, double takeProfit)
         {
             // Only execute if trading is enabled
             if (!tradingEnabled)
@@ -667,11 +717,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         if (Position.MarketPosition == MarketPosition.Flat && !isLongOrderPending)
                         {
-                            // Enter new long position
+                            // Enter new long position with SL/TP
                             Print("LONG SIGNAL - Entering 1 contract");
+                            Print("  Stop Loss: " + stopLoss.ToString("F2") + ", Take Profit: " + takeProfit.ToString("F2"));
                             desiredPosition = "flat";
                             isLongOrderPending = true;
                             isShortOrderPending = false;
+
+                            // Set stop loss and take profit if provided by server
+                            if (stopLoss > 0 && takeProfit > 0)
+                            {
+                                SetStopLoss("AILong", CalculationMode.Price, stopLoss, false);
+                                SetProfitTarget("AILong", CalculationMode.Price, takeProfit);
+                            }
+
                             EnterLong(1, "AILong");
                         }
                         else if (Position.MarketPosition == MarketPosition.Short)
@@ -679,6 +738,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             // Need to reverse from short to long
                             Print($"LONG SIGNAL - Closing {Position.Quantity} SHORT contracts first");
                             desiredPosition = "long";  // Set desired position
+                            desiredStopLoss = stopLoss;  // Store SL for delayed entry
+                            desiredTakeProfit = takeProfit;  // Store TP for delayed entry
                             isShortOrderPending = false;
                             ExitShort();  // Exit current short, then OnExecutionUpdate will enter long
                         }
@@ -697,11 +758,20 @@ namespace NinjaTrader.NinjaScript.Strategies
                     {
                         if (Position.MarketPosition == MarketPosition.Flat && !isShortOrderPending)
                         {
-                            // Enter new short position
+                            // Enter new short position with SL/TP
                             Print("SHORT SIGNAL - Entering 1 contract");
+                            Print("  Stop Loss: " + stopLoss.ToString("F2") + ", Take Profit: " + takeProfit.ToString("F2"));
                             desiredPosition = "flat";
                             isShortOrderPending = true;
                             isLongOrderPending = false;
+
+                            // Set stop loss and take profit if provided by server
+                            if (stopLoss > 0 && takeProfit > 0)
+                            {
+                                SetStopLoss("AIShort", CalculationMode.Price, stopLoss, false);
+                                SetProfitTarget("AIShort", CalculationMode.Price, takeProfit);
+                            }
+
                             EnterShort(1, "AIShort");
                         }
                         else if (Position.MarketPosition == MarketPosition.Long)
@@ -709,6 +779,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             // Need to reverse from long to short
                             Print($"SHORT SIGNAL - Closing {Position.Quantity} LONG contracts first");
                             desiredPosition = "short";  // Set desired position
+                            desiredStopLoss = stopLoss;  // Store SL for delayed entry
+                            desiredTakeProfit = takeProfit;  // Store TP for delayed entry
                             isLongOrderPending = false;
                             ExitLong();  // Exit current long, then OnExecutionUpdate will enter short
                         }
