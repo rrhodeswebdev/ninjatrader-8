@@ -106,7 +106,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 IsInstantiatedOnEachOptimizationIteration = true;
 
                 // Default historical bars to send (can be changed in strategy parameters)
-                HistoricalBarsToSend = 5000;
+                // 15000 bars = ~10 trading days of 1-min ES data (optimal for LSTM training)
+                HistoricalBarsToSend = 15000;
 
                 // Default Daily Profit/Loss Goals
                 DailyProfitGoal = 500.0;  // Default $500 daily profit goal

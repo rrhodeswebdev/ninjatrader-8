@@ -27,6 +27,43 @@ def timing_decorator(func):
         return result
     return wrapper
 
+
+def augment_time_series(X_sequence, augmentation_prob=0.3):
+    """
+    Data augmentation for time series trading data
+    Applied during training to reduce overfitting
+
+    Augmentation types:
+    - Jitter: Add small random noise
+    - Scale: Scale magnitude slightly
+    - Magnitude warp: Warp magnitude of random features
+    """
+    if np.random.random() > augmentation_prob:
+        return X_sequence
+
+    aug_type = np.random.choice(['jitter', 'scale', 'magnitude_warp'])
+
+    if aug_type == 'jitter':
+        # Add small random noise (0.5% of std)
+        noise = np.random.normal(0, 0.005, X_sequence.shape)
+        return X_sequence + noise
+
+    elif aug_type == 'scale':
+        # Scale magnitude slightly (95-105%)
+        scale = np.random.uniform(0.98, 1.02)
+        return X_sequence * scale
+
+    elif aug_type == 'magnitude_warp':
+        # Warp magnitude of random features (10-20% of features)
+        n_features = X_sequence.shape[1]
+        n_warp = max(1, n_features // 10)
+        warp_features = np.random.choice(n_features, size=n_warp, replace=False)
+        warped = X_sequence.copy()
+        warped[:, warp_features] *= np.random.uniform(0.95, 1.05, size=(warped.shape[0], n_warp))
+        return warped
+
+    return X_sequence
+
 def calculate_adx(high, low, close, period=14):
     """
     Calculate Average Directional Index (ADX) for trend strength detection
@@ -168,6 +205,175 @@ def calculate_atr(high, low, close, period=14):
     return atr
 
 
+def calculate_rsi(close, period=14):
+    """
+    Calculate Relative Strength Index (RSI)
+    RSI > 70: Overbought
+    RSI < 30: Oversold
+    """
+    n = len(close)
+    if n < period + 1:
+        return np.zeros(n)
+
+    # Calculate price changes
+    delta = np.diff(close)
+
+    # Separate gains and losses
+    gain = np.where(delta > 0, delta, 0)
+    loss = np.where(delta < 0, -delta, 0)
+
+    # Calculate average gain and loss using EMA
+    import pandas as pd
+    avg_gain = pd.Series(gain).ewm(span=period, adjust=False).mean().values
+    avg_loss = pd.Series(loss).ewm(span=period, adjust=False).mean().values
+
+    # Calculate RS and RSI
+    rs = avg_gain / (avg_loss + 1e-8)
+    rsi = 100 - (100 / (1 + rs))
+
+    # Add zero for first value (no previous close)
+    rsi_full = np.zeros(n)
+    rsi_full[1:] = rsi
+
+    return rsi_full
+
+
+def calculate_rsi_divergence(close, rsi, lookback=10):
+    """
+    Detect RSI divergence (price vs RSI direction mismatch)
+    +1: Bullish divergence (price down, RSI up)
+    -1: Bearish divergence (price up, RSI down)
+    0: No divergence
+    """
+    n = len(close)
+    divergence = np.zeros(n)
+
+    for i in range(lookback, n):
+        # Price direction
+        price_change = close[i] - close[i - lookback]
+        # RSI direction
+        rsi_change = rsi[i] - rsi[i - lookback]
+
+        # Bullish divergence: price falling but RSI rising
+        if price_change < 0 and rsi_change > 0:
+            divergence[i] = 1
+        # Bearish divergence: price rising but RSI falling
+        elif price_change > 0 and rsi_change < 0:
+            divergence[i] = -1
+
+    return divergence
+
+
+def calculate_macd(close, fast=12, slow=26, signal=9):
+    """
+    Calculate MACD (Moving Average Convergence Divergence)
+    Returns: macd_line, signal_line, histogram
+    """
+    n = len(close)
+    if n < slow:
+        return np.zeros(n), np.zeros(n), np.zeros(n)
+
+    import pandas as pd
+    close_series = pd.Series(close)
+
+    # Calculate EMAs
+    ema_fast = close_series.ewm(span=fast, adjust=False).mean().values
+    ema_slow = close_series.ewm(span=slow, adjust=False).mean().values
+
+    # MACD line
+    macd_line = ema_fast - ema_slow
+
+    # Signal line (EMA of MACD)
+    macd_series = pd.Series(macd_line)
+    signal_line = macd_series.ewm(span=signal, adjust=False).mean().values
+
+    # Histogram (difference)
+    histogram = macd_line - signal_line
+
+    return macd_line, signal_line, histogram
+
+
+def calculate_vwma_deviation(close, volume, period=20):
+    """
+    Calculate Volume-Weighted Moving Average deviation
+    Better than SMA for futures markets with volume information
+    """
+    n = len(close)
+    if n < period:
+        return np.zeros(n)
+
+    import pandas as pd
+    close_series = pd.Series(close)
+    volume_series = pd.Series(volume)
+
+    # Volume-weighted MA
+    vwma = (close_series * volume_series).rolling(period).sum() / volume_series.rolling(period).sum()
+    vwma = vwma.bfill().values  # Fixed: Use bfill() instead of deprecated fillna(method='bfill')
+
+    # Deviation as percentage
+    deviation = (close - vwma) / (vwma + 1e-8)
+
+    return deviation
+
+
+def calculate_garman_klass_volatility(open_prices, high, low, close, period=20):
+    """
+    Calculate Garman-Klass volatility estimator
+    More efficient than Parkinson volatility
+    """
+    n = len(close)
+    if n < 2:
+        return np.zeros(n)
+
+    # Garman-Klass formula
+    hl = np.log(high / (low + 1e-8)) ** 2
+    co = np.log(close / (open_prices + 1e-8)) ** 2
+    gk_vol = 0.5 * hl - (2 * np.log(2) - 1) * co
+
+    # Rolling average
+    import pandas as pd
+    gk_vol_series = pd.Series(gk_vol)
+    gk_vol_smooth = gk_vol_series.rolling(period, min_periods=1).mean().values
+
+    return gk_vol_smooth
+
+
+def calculate_price_impact(close, volume):
+    """
+    Calculate price impact per unit volume
+    Measures market liquidity and institutional activity
+    """
+    n = len(close)
+
+    # Price impact = abs(price change) / volume
+    price_change = np.abs(np.diff(close))
+    price_impact = np.zeros(n)
+    price_impact[1:] = price_change / (volume[1:] + 1)
+
+    return price_impact
+
+
+def calculate_volume_weighted_price_change(close, volume, period=5):
+    """
+    Volume-weighted price change
+    Emphasizes price moves with high volume
+    """
+    n = len(close)
+    vwpc = np.zeros(n)
+
+    import pandas as pd
+    close_series = pd.Series(close)
+    volume_series = pd.Series(volume)
+
+    price_change = close_series.diff()
+    avg_volume = volume_series.rolling(period, min_periods=1).mean()
+
+    vwpc_values = (price_change * volume_series) / (avg_volume + 1)
+    vwpc = vwpc_values.fillna(0).values
+
+    return vwpc
+
+
 def align_secondary_to_primary(df_primary, df_secondary):
     """
     Align secondary timeframe data to primary timeframe
@@ -291,13 +497,23 @@ def align_secondary_to_primary(df_primary, df_secondary):
 
             # 4. Alignment score (how aligned is 1-min with 5-min trend)
             # Calculate primary 1-min trend over recent bars
-            if i >= 5:
-                primary_trend = (primary_close[i] - primary_close[i-5]) / (primary_close[i-5] + 1e-8)
-                secondary_trend = aligned_features['tf2_close_change'][i]
-                # Alignment: -1 (counter-trend) to +1 (aligned)
-                if abs(primary_trend) > 1e-8 and abs(secondary_trend) > 1e-8:
-                    alignment = np.sign(primary_trend) * np.sign(secondary_trend)
-                    aligned_features['tf2_alignment_score'][i] = alignment
+            if i >= 5 and secondary_idx >= 1:
+                primary_trend_short = (primary_close[i] - primary_close[i-5]) / (primary_close[i-5] + 1e-8)
+                secondary_trend_short = (secondary_close[secondary_idx] - secondary_close[secondary_idx-1]) / (secondary_close[secondary_idx-1] + 1e-8)
+
+                # Trend alignment scoring:
+                # +1: Both trending same direction (both > 0 or both < 0)
+                # -1: Trending opposite directions
+                # 0: One or both are flat (< threshold)
+                threshold = 0.0001  # 0.01% threshold for "flat"
+
+                if abs(primary_trend_short) < threshold or abs(secondary_trend_short) < threshold:
+                    alignment = 0.0  # One timeframe is flat
+                else:
+                    # Both trending - check if same direction
+                    alignment = np.sign(primary_trend_short) * np.sign(secondary_trend_short)
+
+                aligned_features['tf2_alignment_score'][i] = alignment
 
             # 5. Secondary delta (if available)
             if 'bid_volume' in df_secondary.columns and 'ask_volume' in df_secondary.columns:
@@ -537,6 +753,254 @@ def calculate_price_features(df):
         low_dev[i] = (close_prices[i] - recent_low) / (recent_low + 1e-8)
     features['high_deviation'] = high_dev
     features['low_deviation'] = low_dev
+
+    return features
+
+
+def detect_candlestick_patterns(df):
+    """
+    Detect key candlestick patterns with context-aware scoring
+    Returns dictionary of pattern detection arrays
+    """
+    o, h, l, c = df['open'].values, df['high'].values, df['low'].values, df['close'].values
+    n = len(df)
+
+    patterns = {
+        'bullish_engulfing': np.zeros(n),
+        'bearish_engulfing': np.zeros(n),
+        'hammer': np.zeros(n),
+        'shooting_star': np.zeros(n),
+        'doji': np.zeros(n),
+        'inside_bar': np.zeros(n),
+        'outside_bar': np.zeros(n),
+        'pin_bar_bull': np.zeros(n),
+        'pin_bar_bear': np.zeros(n)
+    }
+
+    for i in range(1, n):
+        body_size = abs(c[i] - o[i])
+        total_range = h[i] - l[i]
+        prev_body_size = abs(c[i-1] - o[i-1])
+
+        # Avoid division by zero
+        if total_range < 1e-8:
+            continue
+
+        # Bullish Engulfing
+        if (c[i-1] < o[i-1] and  # Previous red candle
+            c[i] > o[i] and      # Current green candle
+            o[i] < c[i-1] and    # Opens below prev close
+            c[i] > o[i-1]):      # Closes above prev open
+            patterns['bullish_engulfing'][i] = 1.0
+
+        # Bearish Engulfing
+        if (c[i-1] > o[i-1] and  # Previous green
+            c[i] < o[i] and      # Current red
+            o[i] > c[i-1] and    # Opens above prev close
+            c[i] < o[i-1]):      # Closes below prev open
+            patterns['bearish_engulfing'][i] = 1.0
+
+        # Hammer (bullish reversal)
+        lower_wick = min(o[i], c[i]) - l[i]
+        upper_wick = h[i] - max(o[i], c[i])
+        if (lower_wick > 2 * body_size and
+            upper_wick < 0.1 * total_range and
+            body_size > 0.01 * total_range):  # Must have some body
+            patterns['hammer'][i] = 1.0
+
+        # Shooting Star (bearish reversal)
+        if (upper_wick > 2 * body_size and
+            lower_wick < 0.1 * total_range and
+            body_size > 0.01 * total_range):
+            patterns['shooting_star'][i] = 1.0
+
+        # Doji (indecision)
+        if body_size < 0.1 * total_range:
+            patterns['doji'][i] = 1.0
+
+        # Inside Bar (consolidation)
+        if h[i] < h[i-1] and l[i] > l[i-1]:
+            patterns['inside_bar'][i] = 1.0
+
+        # Outside Bar (breakout)
+        if h[i] > h[i-1] and l[i] < l[i-1]:
+            patterns['outside_bar'][i] = 1.0
+
+        # Pin Bar patterns
+        if lower_wick > 0.6 * total_range and body_size < 0.3 * total_range:
+            patterns['pin_bar_bull'][i] = 1.0
+        if upper_wick > 0.6 * total_range and body_size < 0.3 * total_range:
+            patterns['pin_bar_bear'][i] = 1.0
+
+    return patterns
+
+
+def detect_support_resistance_levels(df, lookback=200, num_levels=5):
+    """
+    Detect S/R levels using volume-weighted price clustering
+    Returns list of price levels and their strengths
+    """
+    if len(df) < lookback:
+        lookback = len(df)
+
+    closes = df['close'].values[-lookback:]
+    volumes = df['volume'].values[-lookback:] if 'volume' in df.columns else np.ones(lookback)
+
+    # Create price bins (0.1% increments for futures)
+    price_range = closes.max() - closes.min()
+    if price_range < 1e-8:
+        return [], []
+
+    bin_size = price_range * 0.001  # 0.1% bins
+    bins = np.arange(closes.min(), closes.max() + bin_size, bin_size)
+
+    # Volume-weighted histogram
+    level_volumes = {}
+    for price, volume in zip(closes, volumes):
+        bin_idx = int((price - bins[0]) / bin_size)
+        if bin_idx < 0 or bin_idx >= len(bins):
+            continue
+        if bin_idx not in level_volumes:
+            level_volumes[bin_idx] = 0
+        level_volumes[bin_idx] += volume
+
+    # Find top N levels by volume
+    if len(level_volumes) == 0:
+        return [], []
+
+    top_levels = sorted(level_volumes.items(),
+                       key=lambda x: x[1], reverse=True)[:num_levels]
+
+    sr_prices = [bins[idx] for idx, _ in top_levels]
+    sr_strengths = [vol for _, vol in top_levels]
+
+    # Normalize strengths
+    max_strength = max(sr_strengths) if sr_strengths else 1.0
+    sr_strengths = [s / max_strength for s in sr_strengths]
+
+    return sr_prices, sr_strengths
+
+
+def calculate_sr_features(df):
+    """
+    Calculate features based on S/R levels
+    Returns dictionary of S/R-related features
+    """
+    n_bars = len(df)
+    features = {
+        'dist_to_nearest_sr': np.zeros(n_bars),
+        'nearest_sr_strength': np.zeros(n_bars),
+        'is_near_sr': np.zeros(n_bars),
+        'above_sr': np.zeros(n_bars)
+    }
+
+    # Need at least 50 bars to detect meaningful S/R levels
+    for i in range(50, n_bars):
+        current_price = df['close'].iloc[i]
+
+        # Get S/R levels based on history up to current bar
+        df_history = df.iloc[:i]
+        sr_prices, sr_strengths = detect_support_resistance_levels(df_history)
+
+        if len(sr_prices) == 0:
+            continue
+
+        # Distance to nearest support/resistance
+        distances = [abs(current_price - sr) / current_price for sr in sr_prices]
+        nearest_idx = np.argmin(distances)
+
+        features['dist_to_nearest_sr'][i] = distances[nearest_idx]
+        features['nearest_sr_strength'][i] = sr_strengths[nearest_idx]
+        features['is_near_sr'][i] = 1.0 if distances[nearest_idx] < 0.002 else 0.0  # Within 0.2%
+        features['above_sr'][i] = 1.0 if current_price > sr_prices[nearest_idx] else 0.0
+
+    return features
+
+
+def calculate_volume_profile(df, lookback=100, num_bins=20):
+    """
+    Calculate volume profile features
+    Returns POC, VAH, VAL and related features
+    """
+    n_bars = len(df)
+    features = {
+        'dist_to_poc': np.zeros(n_bars),
+        'volume_at_price': np.zeros(n_bars),
+        'above_vah': np.zeros(n_bars),
+        'below_val': np.zeros(n_bars),
+        'in_value_area': np.zeros(n_bars)
+    }
+
+    for i in range(lookback, n_bars):
+        recent = df.iloc[i-lookback:i]
+
+        # Create price bins
+        price_min = recent['low'].min()
+        price_max = recent['high'].max()
+
+        if price_max - price_min < 1e-8:
+            continue
+
+        bins = np.linspace(price_min, price_max, num_bins + 1)
+
+        # Accumulate volume at each price level
+        volume_at_price = np.zeros(num_bins)
+
+        for _, bar in recent.iterrows():
+            # Distribute bar volume across its range
+            bar_min_bin = np.digitize(bar['low'], bins) - 1
+            bar_max_bin = np.digitize(bar['high'], bins) - 1
+
+            bar_min_bin = max(0, min(bar_min_bin, num_bins - 1))
+            bar_max_bin = max(0, min(bar_max_bin, num_bins - 1))
+
+            bins_in_bar = max(1, bar_max_bin - bar_min_bin + 1)
+            vol_per_bin = bar['volume'] / bins_in_bar if 'volume' in bar else 1.0 / bins_in_bar
+
+            for b in range(bar_min_bin, bar_max_bin + 1):
+                if b < num_bins:
+                    volume_at_price[b] += vol_per_bin
+
+        # Find POC (Point of Control) - price with highest volume
+        poc_bin = np.argmax(volume_at_price)
+        poc_price = (bins[poc_bin] + bins[poc_bin + 1]) / 2
+
+        # Value Area (70% of volume)
+        total_volume = volume_at_price.sum()
+        if total_volume < 1e-8:
+            continue
+
+        target_volume = total_volume * 0.70
+
+        # Find VAH and VAL
+        sorted_bins = np.argsort(volume_at_price)[::-1]
+        accumulated_vol = 0
+        value_area_bins = []
+
+        for bin_idx in sorted_bins:
+            accumulated_vol += volume_at_price[bin_idx]
+            value_area_bins.append(bin_idx)
+            if accumulated_vol >= target_volume:
+                break
+
+        if len(value_area_bins) == 0:
+            continue
+
+        vah = bins[max(value_area_bins) + 1]  # Value Area High
+        val = bins[min(value_area_bins)]      # Value Area Low
+
+        current_price = df['close'].iloc[i]
+
+        features['dist_to_poc'][i] = (current_price - poc_price) / current_price
+
+        # Volume at current price level
+        current_bin = np.digitize(current_price, bins) - 1
+        current_bin = max(0, min(current_bin, num_bins - 1))
+        features['volume_at_price'][i] = volume_at_price[current_bin] / total_volume if total_volume > 0 else 0
+
+        features['above_vah'][i] = 1.0 if current_price > vah else 0.0
+        features['below_val'][i] = 1.0 if current_price < val else 0.0
+        features['in_value_area'][i] = 1.0 if val <= current_price <= vah else 0.0
 
     return features
 
@@ -837,11 +1301,158 @@ class ProfitWeightedLoss(nn.Module):
         return weighted_loss
 
 
+def simulate_trade(df, entry_idx, sl_price, tp_price, max_bars, is_long):
+    """
+    Simulate a single trade from entry to exit
+    Returns dict with pnl, bars_held, and exit_reason
+    """
+    if entry_idx >= len(df) - 1:
+        return {'pnl': 0.0, 'bars_held': 0, 'exit': 'INVALID'}
+
+    entry_price = df['close'].iloc[entry_idx]
+
+    for i in range(entry_idx + 1, min(entry_idx + max_bars + 1, len(df))):
+        bar_high = df['high'].iloc[i]
+        bar_low = df['low'].iloc[i]
+
+        if is_long:
+            # Check SL first (conservative - worst case)
+            if bar_low <= sl_price:
+                return {'pnl': (sl_price - entry_price), 'bars_held': i - entry_idx, 'exit': 'SL'}
+            # Then check TP
+            if bar_high >= tp_price:
+                return {'pnl': (tp_price - entry_price), 'bars_held': i - entry_idx, 'exit': 'TP'}
+        else:
+            # SHORT trade
+            if bar_high >= sl_price:
+                return {'pnl': (entry_price - sl_price), 'bars_held': i - entry_idx, 'exit': 'SL'}
+            if bar_low <= tp_price:
+                return {'pnl': (entry_price - tp_price), 'bars_held': i - entry_idx, 'exit': 'TP'}
+
+    # Time stop - exit at market
+    exit_price = df['close'].iloc[min(entry_idx + max_bars, len(df) - 1)]
+    pnl = (exit_price - entry_price) if is_long else (entry_price - exit_price)
+    return {'pnl': pnl, 'bars_held': max_bars, 'exit': 'TIME'}
+
+
+def generate_label_with_simulation(df, entry_idx, sl_pct=0.005, tp_pct=0.01, max_bars=10,
+                                   commission=2.50, slippage_ticks=0.25, tick_value=5.0):
+    """
+    Generate trade label by simulating actual trades with SL/TP
+    Returns: label (0=SHORT, 1=HOLD, 2=LONG), expected_return, bars_held
+    """
+    if entry_idx >= len(df) - max_bars:
+        return 1, 0.0, 0  # HOLD - not enough future data
+
+    entry_price = df['close'].iloc[entry_idx]
+
+    # Try LONG trade
+    long_sl = entry_price * (1 - sl_pct)
+    long_tp = entry_price * (1 + tp_pct)
+    long_result = simulate_trade(df, entry_idx, long_sl, long_tp, max_bars, is_long=True)
+
+    # Try SHORT trade
+    short_sl = entry_price * (1 + sl_pct)
+    short_tp = entry_price * (1 - tp_pct)
+    short_result = simulate_trade(df, entry_idx, short_sl, short_tp, max_bars, is_long=False)
+
+    # Calculate expected returns (accounting for costs)
+    slippage_cost = 2 * slippage_ticks * tick_value  # Round trip
+
+    long_pnl = (long_result['pnl'] * tick_value / 0.25) - commission - slippage_cost  # Convert to dollars
+    short_pnl = (short_result['pnl'] * tick_value / 0.25) - commission - slippage_cost
+
+    # Decision logic
+    min_edge = 10.0  # Need at least $10 edge to trade
+
+    # More balanced decision logic - ensure both directions get fair chance
+    if long_pnl > min_edge and long_pnl > short_pnl:
+        return 2, long_pnl, long_result['bars_held']  # LONG
+    elif short_pnl > min_edge and short_pnl > long_pnl:
+        return 0, short_pnl, short_result['bars_held']  # SHORT
+    else:
+        return 1, 0.0, 0  # HOLD - no clear edge
+
+
+def calculate_realtime_order_flow(df):
+    """
+    Enhanced order flow features for real-time trading
+    ONLY use when bid/ask data is available from live market
+    """
+    bid_vol = df['bid_volume'].values if 'bid_volume' in df.columns else np.zeros(len(df))
+    ask_vol = df['ask_volume'].values if 'ask_volume' in df.columns else np.zeros(len(df))
+
+    # Check if we have real bid/ask data (not zeros)
+    if bid_vol.sum() == 0 and ask_vol.sum() == 0:
+        # Return zero features if no bid/ask data
+        n = len(df)
+        return {
+            'delta': np.zeros(n),
+            'cumulative_delta': np.zeros(n),
+            'delta_divergence': np.zeros(n),
+            'aggressive_buy_ratio': np.zeros(n),
+            'order_flow_imbalance': np.zeros(n),
+            'cum_delta_momentum': np.zeros(n),
+            'cum_delta_roc': np.zeros(n),  # Added for new features
+            'delta_acceleration': np.zeros(n)  # Added for new features
+        }
+
+    n = len(df)
+    features = {}
+
+    # 1. Delta (buy pressure - sell pressure)
+    delta = ask_vol - bid_vol
+    total_vol = ask_vol + bid_vol
+    features['delta'] = delta / (total_vol + 1e-8)
+
+    # 2. Cumulative Delta (running total)
+    cum_delta = np.cumsum(delta)
+    features['cumulative_delta'] = cum_delta
+
+    # 3. Delta Divergence (price up but delta down = bearish)
+    price_direction = np.zeros(n)
+    delta_direction = np.zeros(n)
+
+    for i in range(1, n):
+        price_direction[i] = np.sign(df['close'].iloc[i] - df['close'].iloc[i-1])
+        delta_direction[i] = np.sign(delta[i] - delta[i-1])
+
+    divergence = (price_direction != delta_direction).astype(float)
+    features['delta_divergence'] = divergence
+
+    # 4. Aggressive Buy Ratio
+    features['aggressive_buy_ratio'] = ask_vol / (total_vol + 1e-8)
+
+    # 5. Order Flow Imbalance
+    imbalance = (ask_vol - bid_vol) / (total_vol + 1e-8)
+    features['order_flow_imbalance'] = imbalance
+
+    # 6. Cumulative Delta Momentum (deviation from moving average)
+    window = 20
+    cum_delta_ma = pd.Series(cum_delta).rolling(window, min_periods=1).mean().values
+    features['cum_delta_momentum'] = cum_delta - cum_delta_ma
+
+    # 7. Cumulative Delta Rate of Change (momentum acceleration)
+    cum_delta_roc = np.zeros(n)
+    for i in range(1, n):
+        if abs(cum_delta[i-1]) > 1e-8:
+            cum_delta_roc[i] = (cum_delta[i] - cum_delta[i-1]) / (abs(cum_delta[i-1]) + 1)
+    features['cum_delta_roc'] = cum_delta_roc
+
+    # 8. Delta Acceleration (second derivative)
+    delta_accel = np.zeros(n)
+    for i in range(2, n):
+        delta_accel[i] = delta[i] - 2*delta[i-1] + delta[i-2]
+    features['delta_acceleration'] = delta_accel
+
+    return features
+
+
 class TradingRNN(nn.Module):
     """
     Enhanced LSTM-based RNN with attention mechanism for predicting trade signals
 
-    Features (62 total after feature reduction):
+    Features (86 total with all enhancements):
     - OHLC (4) + Hurst (2) + ATR (1) = 7
     - Price Momentum (2) + Price Patterns (15) + Deviation Features (13) = 30
     - Order Flow (1) = 1
@@ -856,7 +1467,7 @@ class TradingRNN(nn.Module):
     - Added self-attention mechanism
     - Better regularization
     """
-    def __init__(self, input_size=62, hidden_size=128, num_layers=3, output_size=3):
+    def __init__(self, input_size=86, hidden_size=128, num_layers=3, output_size=3):
         super(TradingRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -902,6 +1513,216 @@ class TradingRNN(nn.Module):
         if return_attention:
             return out, attn_weights
         return out
+
+
+class ImprovedTradingRNN(nn.Module):
+    """
+    Improved LSTM-based RNN with optimized architecture
+
+    Key improvements over TradingRNN:
+    - Reduced dropout from 0.5 to 0.3 (less aggressive regularization)
+    - Added batch normalization for training stability
+    - Added learnable positional encoding for better time awareness
+    - Deeper FC layers (4 layers instead of 3)
+    - Optimized for 97 input features and sequence_length=15
+    """
+    def __init__(self, input_size=97, hidden_size=128, num_layers=2, output_size=3):
+        super(ImprovedTradingRNN, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.sequence_length = 15  # Expected sequence length
+
+        # IMPROVED: Reduced dropout from 0.5 to 0.3
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.3)
+
+        # IMPROVED: Add learnable positional encoding
+        self.positional_encoding = nn.Parameter(torch.randn(1, self.sequence_length, hidden_size) * 0.02)
+
+        # Self-attention mechanism (keep from original - this works well)
+        self.attention = nn.MultiheadAttention(hidden_size, num_heads=4, dropout=0.1, batch_first=True)
+
+        # Layer normalization for stability
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        # IMPROVED: Deeper FC layers with batch normalization
+        self.fc1 = nn.Linear(hidden_size, 128)
+        self.bn1 = nn.BatchNorm1d(128)
+        self.fc2 = nn.Linear(128, 64)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.fc3 = nn.Linear(64, 32)
+        self.bn3 = nn.BatchNorm1d(32)
+        self.fc4 = nn.Linear(32, output_size)
+
+        # IMPROVED: Reduced dropout to 0.25 (was 0.4 and 0.3)
+        self.dropout = nn.Dropout(0.25)
+        self.relu = nn.ReLU()
+
+    def count_parameters(self):
+        """Count trainable parameters"""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def forward(self, x, return_attention=False):
+        # x shape: (batch, sequence_length, input_size)
+        batch_size, seq_len, _ = x.shape
+
+        # LSTM forward pass
+        lstm_out, _ = self.lstm(x)
+
+        # IMPROVED: Add positional encoding (dynamically adjust if sequence length differs)
+        if seq_len == self.sequence_length:
+            lstm_out = lstm_out + self.positional_encoding
+        else:
+            # Handle variable sequence lengths during inference
+            pos_enc = self.positional_encoding[:, :seq_len, :]
+            lstm_out = lstm_out + pos_enc
+
+        # Apply self-attention
+        attended_out, attn_weights = self.attention(lstm_out, lstm_out, lstm_out)
+
+        # Add residual connection and layer norm
+        attended_out = self.layer_norm(lstm_out + attended_out)
+
+        # Take the last output from the sequence
+        last_output = attended_out[:, -1, :]
+
+        # IMPROVED: Pass through deeper FC layers with batch norm
+        out = self.relu(self.bn1(self.fc1(last_output)))
+        out = self.dropout(out)
+        out = self.relu(self.bn2(self.fc2(out)))
+        out = self.dropout(out)
+        out = self.relu(self.bn3(self.fc3(out)))
+        out = self.fc4(out)  # No activation - softmax applied in loss function
+
+        if return_attention:
+            return out, attn_weights
+        return out
+
+
+class HybridTradingModel(nn.Module):
+    """
+    Hybrid LSTM+Transformer architecture for improved pattern recognition
+    Combines LSTM for sequential processing with Transformer for long-range dependencies
+    """
+    def __init__(self, input_size=85, hidden_size=128, num_layers=2, output_size=3):
+        super().__init__()
+        self.hidden_size = hidden_size
+
+        # LSTM branch for temporal features
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers,
+                           batch_first=True, dropout=0.3)
+
+        # Transformer encoder for pattern recognition
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=8,
+            dim_feedforward=256,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=3)
+
+        # Attention to combine LSTM and Transformer outputs
+        self.fusion_attention = nn.MultiheadAttention(
+            hidden_size, num_heads=4, batch_first=True
+        )
+
+        # Price level memory (learned embedding of S/R levels)
+        self.level_memory = nn.Parameter(torch.randn(20, hidden_size))
+
+        # Final classification layers
+        self.fc1 = nn.Linear(hidden_size * 2, 128)  # *2 for LSTM+Transformer concat
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, output_size)
+
+        self.dropout = nn.Dropout(0.4)
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+    def forward(self, x):
+        # LSTM path
+        lstm_out, _ = self.lstm(x)
+
+        # Transformer path
+        transformer_out = self.transformer(x)
+
+        # Combine using attention
+        combined, _ = self.fusion_attention(
+            lstm_out, transformer_out, transformer_out
+        )
+        combined = self.layer_norm(combined)
+
+        # Take last time step
+        last_hidden = combined[:, -1, :]
+
+        # Also attend to price level memory
+        level_context, _ = self.fusion_attention(
+            last_hidden.unsqueeze(1),
+            self.level_memory.unsqueeze(0).expand(x.size(0), -1, -1),
+            self.level_memory.unsqueeze(0).expand(x.size(0), -1, -1)
+        )
+        level_context = level_context.squeeze(1)
+
+        # Concatenate both contexts
+        features = torch.cat([last_hidden, level_context], dim=1)
+
+        # Classification
+        out = F.relu(self.fc1(features))
+        out = self.dropout(out)
+        out = F.relu(self.fc2(out))
+        out = self.dropout(out)
+        out = self.fc3(out)
+
+        return out
+
+
+class MultiTaskTradingModel(nn.Module):
+    """
+    Multi-task learning model that predicts:
+    1. Direction (SHORT/HOLD/LONG)
+    2. Magnitude (expected price change)
+    3. Time to target (bars until TP/SL hit)
+    """
+    def __init__(self, input_size=85, hidden_size=128):
+        super().__init__()
+
+        # Shared feature extractor (LSTM with attention)
+        self.lstm = nn.LSTM(input_size, hidden_size, 3,
+                           batch_first=True, dropout=0.3)
+        self.attention = nn.MultiheadAttention(hidden_size, 4, batch_first=True)
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        # Task-specific heads
+        self.direction_head = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 3)  # SHORT/HOLD/LONG
+        )
+
+        self.magnitude_head = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, 1)  # Predicted price change %
+        )
+
+        self.time_to_target_head = nn.Sequential(
+            nn.Linear(hidden_size, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)  # Expected bars to target
+        )
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        attended, _ = self.attention(lstm_out, lstm_out, lstm_out)
+        attended = self.layer_norm(lstm_out + attended)  # Residual connection
+        features = attended[:, -1, :]
+
+        direction = self.direction_head(features)
+        magnitude = self.magnitude_head(features)
+        time_to_target = self.time_to_target_head(features)
+
+        return direction, magnitude, time_to_target
+
 
 class AdaptiveConfidenceThresholds:
     """
@@ -990,8 +1811,10 @@ class TradingModel:
     """
     Wrapper class for training and prediction with state management
     """
-    def __init__(self, sequence_length=40, model_path='models/trading_model.pth'):
-        self.model = TradingRNN(input_size=62, hidden_size=128, num_layers=3, output_size=3)
+    def __init__(self, sequence_length=15, model_path='models/trading_model.pth'):
+        # IMPROVED: Updated input_size from 86 to 97, sequence_length from 40 to 15
+        # IMPROVED: Reduced num_layers from 3 to 2 for better generalization
+        self.model = ImprovedTradingRNN(input_size=97, hidden_size=128, num_layers=2, output_size=3)
         self.scaler = StandardScaler()
         self.sequence_length = sequence_length
         self.is_trained = False
@@ -1007,6 +1830,9 @@ class TradingModel:
         self.max_recent_predictions = 50
 
         print(f"Using device: {self.device}")
+        print(f"Model: ImprovedTradingRNN with {self.model.count_parameters():,} parameters")
+        print(f"Sequence length: {self.sequence_length}")
+        print(f"Input features: 97")
         self.model.to(self.device)
 
         # Don't compile yet - wait until after potential model loading
@@ -1136,8 +1962,39 @@ class TradingModel:
         # Calculate all advanced price features
         price_features = calculate_price_features(df)
 
+        # NEW: Calculate RSI
+        rsi = calculate_rsi(df['close'].values)
+        rsi_divergence = calculate_rsi_divergence(df['close'].values, rsi)
+
+        # NEW: Calculate MACD
+        macd_line, macd_signal, macd_histogram = calculate_macd(df['close'].values)
+
+        # NEW: Calculate VWMA deviation
+        volume = df['volume'].values if 'volume' in df.columns else np.ones(len(df))
+        vwma_dev = calculate_vwma_deviation(df['close'].values, volume)
+
+        # NEW: Calculate Garman-Klass volatility
+        gk_volatility = calculate_garman_klass_volatility(df['open'].values, df['high'].values,
+                                                           df['low'].values, df['close'].values)
+
+        # NEW: Calculate price impact and volume-weighted price change
+        price_impact = calculate_price_impact(df['close'].values, volume)
+        vwpc = calculate_volume_weighted_price_change(df['close'].values, volume)
+
+        # Calculate candlestick patterns
+        candlestick_patterns = detect_candlestick_patterns(df)
+
+        # Calculate support/resistance features
+        sr_features = calculate_sr_features(df)
+
+        # Calculate volume profile features
+        volume_profile_features = calculate_volume_profile(df)
+
         # Calculate order flow features
         order_flow_features = calculate_order_flow_features(df)
+
+        # Calculate enhanced real-time order flow (only if bid/ask data available)
+        realtime_order_flow = calculate_realtime_order_flow(df)
 
         # Calculate time-of-day features
         time_features = calculate_time_features(df)
@@ -1168,6 +2025,41 @@ class TradingModel:
         for i in range(5, n_bars):
             recent_changes = np.abs(np.diff(ohlc[i-5:i+1, 3]) / ohlc[i-5:i, 3])
             price_change_magnitude[i] = np.mean(recent_changes)
+
+        # NEW: Feature Interaction Terms
+        # 1. Volume-Volatility regime interaction (high vol + high volume = explosive move)
+        vol_volume_interaction = volatility_regime_features['volatility_regime'] * volatility_regime_features['volume_regime']
+
+        # 2. Trend-Timeframe alignment interaction (strong when both aligned)
+        trend_tf_interaction = price_features['trend_strength'] * secondary_features['tf2_trend_direction']
+
+        # 3. Price position * Volatility (explosive signal when at extremes with high vol)
+        explosive_signal = price_features['position_in_range'] * price_features['std_dev_20']
+
+        # NEW: Lagged Features for critical indicators
+        # RSI lag 1 and 2
+        rsi_lag1 = np.roll(rsi, 1)
+        rsi_lag1[0] = rsi[0]
+        rsi_lag2 = np.roll(rsi, 2)
+        rsi_lag2[:2] = rsi[0]
+
+        # MACD histogram lag 1 and 2
+        macd_hist_lag1 = np.roll(macd_histogram, 1)
+        macd_hist_lag1[0] = macd_histogram[0]
+        macd_hist_lag2 = np.roll(macd_histogram, 2)
+        macd_hist_lag2[:2] = macd_histogram[0]
+
+        # Velocity lag 1 and 2
+        velocity_lag1 = np.roll(price_features['velocity'], 1)
+        velocity_lag1[0] = price_features['velocity'][0]
+        velocity_lag2 = np.roll(price_features['velocity'], 2)
+        velocity_lag2[:2] = price_features['velocity'][0]
+
+        # Cumulative delta lag 1 and 2 (when available)
+        cum_delta_lag1 = np.roll(realtime_order_flow['cumulative_delta'], 1)
+        cum_delta_lag1[0] = realtime_order_flow['cumulative_delta'][0]
+        cum_delta_lag2 = np.roll(realtime_order_flow['cumulative_delta'], 2)
+        cum_delta_lag2[:2] = realtime_order_flow['cumulative_delta'][0]
 
         # REMOVED: Daily P&L features (always 0 during training - 3 features removed)
         # REMOVED: 6 order flow features (always 0 during training)
@@ -1276,27 +2168,27 @@ class TradingModel:
             price_features['higher_highs'],          # 1
             price_features['lower_lows'],            # 1
             price_features['trend_strength'],        # 1
-            # Deviation features - REDUCED: only windows 20 & 50 (2 windows × 5 metrics = 10)
+            # Deviation features - REDUCED: only window 20 (5 metrics, removed 50-period = 5 features removed)
             price_features['mean_dev_20'],           # 1
-            price_features['mean_dev_50'],           # 1
+            # REMOVED: mean_dev_50 (redundant)
             price_features['median_dev_20'],         # 1
-            price_features['median_dev_50'],         # 1
+            # REMOVED: median_dev_50 (redundant)
             price_features['std_dev_20'],            # 1
-            price_features['std_dev_50'],            # 1
+            # REMOVED: std_dev_50 (redundant)
             price_features['z_score_20'],            # 1
-            price_features['z_score_50'],            # 1
+            # REMOVED: z_score_50 (redundant)
             price_features['bb_width_20'],           # 1
-            price_features['bb_width_50'],           # 1
+            # REMOVED: bb_width_50 (redundant)
             # Additional deviation features: 3
             price_features['vol_acceleration'],      # 1
             price_features['high_deviation'],        # 1
             price_features['low_deviation'],         # 1
             # Order flow - REDUCED: only volume_ratio (1 feature, removed 6)
             order_flow_features['volume_ratio'],     # 1
-            # Time-of-day features: 5
+            # Time-of-day features: REDUCED from 5 to 3 (removed minutes_into_session, minutes_to_close)
             time_features['hour_of_day'],            # 1
-            time_features['minutes_into_session'],   # 1
-            time_features['minutes_to_close'],       # 1
+            # REMOVED: minutes_into_session (redundant with hour_of_day)
+            # REMOVED: minutes_to_close (inverse of minutes_into_session)
             time_features['is_opening_period'],      # 1
             time_features['is_closing_period'],      # 1
             # Microstructure features: 5
@@ -1310,7 +2202,7 @@ class TradingModel:
             volatility_regime_features['parkinson_volatility'], # 1
             volatility_regime_features['volume_regime'], # 1
             volatility_regime_features['trending_score'], # 1
-            # Multi-timeframe features - REDUCED: 9 (removed tf2_delta)
+            # Multi-timeframe features: 9 (tf2_delta removed earlier)
             secondary_features['tf2_close'],         # 1
             secondary_features['tf2_close_change'],  # 1
             secondary_features['tf2_high_low_range'], # 1
@@ -1320,13 +2212,72 @@ class TradingModel:
             secondary_features['tf2_momentum'],      # 1
             secondary_features['tf2_volatility'],    # 1
             secondary_features['tf2_alignment_score'], # 1
+            # Candlestick patterns: REDUCED from 9 to 7 (removed pin_bar_bull, pin_bar_bear)
+            candlestick_patterns['bullish_engulfing'], # 1
+            candlestick_patterns['bearish_engulfing'], # 1
+            candlestick_patterns['hammer'],            # 1
+            candlestick_patterns['shooting_star'],     # 1
+            candlestick_patterns['doji'],              # 1
+            candlestick_patterns['inside_bar'],        # 1
+            candlestick_patterns['outside_bar'],       # 1
+            # REMOVED: pin_bar_bull (redundant with hammer)
+            # REMOVED: pin_bar_bear (redundant with shooting_star)
+            # Support/Resistance features: 4
+            sr_features['dist_to_nearest_sr'],         # 1
+            sr_features['nearest_sr_strength'],        # 1
+            sr_features['is_near_sr'],                 # 1
+            sr_features['above_sr'],                   # 1
+            # Volume Profile features: 5
+            volume_profile_features['dist_to_poc'],    # 1
+            volume_profile_features['volume_at_price'], # 1
+            volume_profile_features['above_vah'],      # 1
+            volume_profile_features['below_val'],      # 1
+            volume_profile_features['in_value_area'],  # 1
+            # Real-time Order Flow features: 8 (added 2 new: cum_delta_roc, delta_acceleration)
+            realtime_order_flow['delta'],              # 1
+            realtime_order_flow['cumulative_delta'],   # 1
+            realtime_order_flow['delta_divergence'],   # 1
+            realtime_order_flow['aggressive_buy_ratio'], # 1
+            realtime_order_flow['order_flow_imbalance'], # 1
+            realtime_order_flow['cum_delta_momentum'], # 1
+            realtime_order_flow['cum_delta_roc'],      # 1 (NEW)
+            realtime_order_flow['delta_acceleration'], # 1 (NEW)
             # Price change magnitude: 1
-            price_change_magnitude                   # 1
+            price_change_magnitude,                    # 1
+            # NEW: RSI indicators: 2
+            rsi,                                       # 1
+            rsi_divergence,                            # 1
+            # NEW: MACD indicators: 3
+            macd_line,                                 # 1
+            macd_signal,                               # 1
+            macd_histogram,                            # 1
+            # NEW: Additional indicators: 4
+            vwma_dev,                                  # 1
+            gk_volatility,                             # 1
+            price_impact,                              # 1
+            vwpc,                                      # 1
+            # NEW: Feature Interactions: 3
+            vol_volume_interaction,                    # 1
+            trend_tf_interaction,                      # 1
+            explosive_signal,                          # 1
+            # NEW: Lagged Features: 8
+            rsi_lag1,                                  # 1
+            rsi_lag2,                                  # 1
+            macd_hist_lag1,                            # 1
+            macd_hist_lag2,                            # 1
+            velocity_lag1,                             # 1
+            velocity_lag2,                             # 1
+            cum_delta_lag1,                            # 1
+            cum_delta_lag2                             # 1
         ])
 
         # Only log during training
         if fit_scaler:
-            print(f"Total features: {features.shape[1]} (OHLC:4 + Hurst:2 + ATR:1 + Price:2 + Patterns:15 + Deviation:13 + OrderFlow:1 + TimeOfDay:5 + Microstructure:5 + VolRegime:4 + MultiTF:9 + PriceChangeMag:1 = 62)")
+            # New feature count: Removed 9 features, Added 20 features = Net +11
+            # Original: 86, Removed: 9 (5 deviation + 2 time + 2 candlestick), Added: 20 (2 RSI + 3 MACD + 4 new indicators + 2 order flow + 3 interactions + 8 lagged)
+            # Total: 86 - 9 + 20 = 97 features
+            print(f"Total features: {features.shape[1]}")
+            print(f"Breakdown: OHLC:4 + Hurst:2 + ATR:1 + Momentum:2 + Patterns:15 + Deviation:8 (reduced from 13) + OrderFlow:1 + Time:3 (reduced from 5) + Microstructure:5 + VolRegime:4 + MultiTF:9 + Candlestick:7 (reduced from 9) + SR:4 + VolumeProfile:5 + RealtimeOrderFlow:8 (added 2) + PriceChangeMag:1 + RSI:2 + MACD:3 + NewIndicators:4 + Interactions:3 + Lagged:8 = 97")
 
         # Scale the features
         if fit_scaler:
@@ -1459,7 +2410,8 @@ class TradingModel:
         print(f"  LONG:  {val_counts[2]:4d} ({val_counts[2]/len(y_val)*100:5.1f}%)")
         print(f"{'='*50}\n")
 
-        # Create DataLoader for mini-batch training
+        # IMPROVED: Create DataLoader with data augmentation
+        # Note: Augmentation is applied on-the-fly during training for better diversity
         train_dataset = torch.utils.data.TensorDataset(
             torch.FloatTensor(X_train),
             torch.LongTensor(y_train)
@@ -1473,24 +2425,49 @@ class TradingModel:
         y_val_tensor = torch.LongTensor(y_val).to(self.device)
 
         # Calculate class weights to handle imbalance
+        # Using more aggressive weighting to prevent minority class suppression
         class_counts = np.bincount(y_train, minlength=3)
         total_samples = len(y_train)
-        class_weights = torch.FloatTensor([
+
+        # Method 1: Standard inverse frequency (current)
+        standard_weights = torch.FloatTensor([
             total_samples / (3 * max(count, 1)) for count in class_counts
-        ]).to(self.device)
+        ])
 
-        print(f"Class weights: Short={class_weights[0]:.2f}, Hold={class_weights[1]:.2f}, Long={class_weights[2]:.2f}")
+        # Method 2: Square root of inverse frequency (more aggressive for rare classes)
+        sqrt_weights = torch.FloatTensor([
+            np.sqrt(total_samples / (3 * max(count, 1))) for count in class_counts
+        ])
 
-        # Training setup with Focal Loss (better for imbalanced classes and hard examples)
+        # Method 3: Effective number of samples (best for extreme imbalance)
+        beta = 0.9999
+        effective_nums = 1.0 - np.power(beta, class_counts)
+        effective_nums = np.where(effective_nums == 0, 1, effective_nums)
+        ens_weights = torch.FloatTensor((1.0 - beta) / effective_nums)
+
+        # Use ENS weights (most aggressive) - change to standard_weights or sqrt_weights if needed
+        class_weights = ens_weights.to(self.device)
+
+        print(f"\nClass counts: Short={class_counts[0]}, Hold={class_counts[1]}, Long={class_counts[2]}")
+        print(f"Class weights (ENS): Short={class_weights[0]:.4f}, Hold={class_weights[1]:.4f}, Long={class_weights[2]:.4f}")
+        print(f"Weight ratios - Short/Hold: {class_weights[0]/class_weights[1]:.2f}x, Short/Long: {class_weights[0]/class_weights[2]:.2f}x")
+
+        # IMPROVED: Training setup with FocalLoss (better for imbalanced classes)
+        # Note: ProfitWeightedLoss requires price_changes which aren't available in mini-batch training
+        # FocalLoss focuses on hard examples and works well with class imbalance
         criterion = FocalLoss(gamma=2.0, weight=class_weights)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+
+        # IMPROVED: Learning rate scheduling (already present - keeping ReduceLROnPlateau)
+        # Removed verbose=True (deprecated), use get_last_lr() instead if needed
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5
+            optimizer, mode='max', factor=0.5, patience=5
         )
 
-        # Early stopping setup
+        # IMPROVED: Early stopping on trading Sharpe ratio (not just validation loss)
+        best_val_sharpe = -np.inf
         best_val_loss = float('inf')
-        patience = 10
+        patience = 15  # Increased patience for Sharpe-based stopping
         patience_counter = 0
 
         # Training loop
@@ -1500,7 +2477,10 @@ class TradingModel:
             batch_count = 0
 
             for batch_X, batch_y in train_loader:
-                batch_X = batch_X.to(self.device)
+                # IMPROVED: Apply data augmentation (30% probability)
+                batch_X_np = batch_X.numpy()
+                batch_X_aug = np.array([augment_time_series(seq) for seq in batch_X_np])
+                batch_X = torch.FloatTensor(batch_X_aug).to(self.device)
                 batch_y = batch_y.to(self.device)
 
                 optimizer.zero_grad()
@@ -1523,6 +2503,10 @@ class TradingModel:
             with torch.no_grad():
                 val_outputs = self.model(X_val_tensor, return_attention=False)  # Don't need attention during validation
                 val_loss = criterion(val_outputs, y_val_tensor)
+
+                # Analyze raw logits to detect class suppression
+                val_logits_mean = val_outputs.mean(dim=0).cpu().numpy()
+                val_logits_std = val_outputs.std(dim=0).cpu().numpy()
 
                 # Calculate metrics
                 val_predictions = torch.argmax(val_outputs, dim=1).cpu().numpy()
@@ -1549,8 +2533,27 @@ class TradingModel:
 
             self.model.train()
 
-            # Learning rate scheduling
-            scheduler.step(val_loss)
+            # IMPROVED: Calculate Sharpe ratio for early stopping (compute every epoch, not just every 10)
+            val_start_idx = len(X) - len(X_val)
+            val_price_changes = []
+            for i in range(val_start_idx, min(len(ohlc) - self.sequence_length, val_start_idx + len(X_val))):
+                if i + self.sequence_length < len(ohlc):
+                    current_close = ohlc[i + self.sequence_length - 1, 3]
+                    future_close = ohlc[i + self.sequence_length, 3]
+                    price_change = (future_close - current_close) / current_close
+                    val_price_changes.append(price_change)
+
+            if len(val_price_changes) > 0:
+                val_price_changes = np.array(val_price_changes[:len(val_predictions)])
+                daily_pnl_config = {'dailyGoal': 500.0, 'dailyMaxLoss': 250.0}
+                trading_metrics = evaluate_trading_performance(val_predictions, y_val[:len(val_price_changes)],
+                                                              val_price_changes, daily_pnl_config)
+                current_sharpe = trading_metrics['sharpe_ratio']
+            else:
+                current_sharpe = -np.inf
+
+            # Learning rate scheduling based on Sharpe ratio
+            scheduler.step(current_sharpe)
 
             if (epoch + 1) % 10 == 0:
                 # Show prediction distribution
@@ -1587,7 +2590,13 @@ class TradingModel:
                 print(f"  Overall Accuracy: {val_accuracy:.4f} ({val_accuracy*100:.1f}%)")
                 print(f"  Per-Class Accuracy: SHORT={per_class_acc[0]:.3f}, HOLD={per_class_acc[1]:.3f}, LONG={per_class_acc[2]:.3f}")
                 print(f"  Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+                print(f"\n  Raw Logits (mean±std):")
+                print(f"    SHORT: {val_logits_mean[0]:+.3f}±{val_logits_std[0]:.3f}")
+                print(f"    HOLD:  {val_logits_mean[1]:+.3f}±{val_logits_std[1]:.3f}")
+                print(f"    LONG:  {val_logits_mean[2]:+.3f}±{val_logits_std[2]:.3f}")
                 print(f"\n  All Predictions: Short={pred_dist[0]}, Hold={pred_dist[1]}, Long={pred_dist[2]}")
+                if pred_dist[0] == 0:
+                    print(f"  ⚠️  WARNING: Model is NOT predicting SHORT at all! Check logits above.")
                 print(f"  High-Confidence (>={high_conf_threshold*100:.0f}%):")
                 print(f"    Count: {len(high_conf_preds)} ({len(high_conf_preds)/len(val_predictions)*100:.1f}% of predictions)")
                 print(f"    Accuracy: {high_conf_accuracy:.4f} ({high_conf_accuracy*100:.1f}%)")
@@ -1603,16 +2612,22 @@ class TradingModel:
                 if trading_metrics['trades_stopped_by_loss'] > 0:
                     print(f"    Stopped by loss: {trading_metrics['trades_stopped_by_loss']} times")
 
-            # Early stopping
-            if val_loss < best_val_loss:
+            # IMPROVED: Early stopping based on Sharpe ratio (trading performance, not just loss)
+            if current_sharpe > best_val_sharpe:
+                best_val_sharpe = current_sharpe
                 best_val_loss = val_loss
                 patience_counter = 0
                 # Save best model
                 self.save_model()
+                if (epoch + 1) % 10 == 0:
+                    print(f"  ✓ New best Sharpe ratio: {best_val_sharpe:.4f} (saved model)")
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    print(f"\nEarly stopping triggered at epoch {epoch+1}")
+                    print(f"\n{'='*50}")
+                    print(f"Early stopping triggered at epoch {epoch+1}")
+                    print(f"Best validation Sharpe ratio: {best_val_sharpe:.4f}")
+                    print(f"{'='*50}")
                     break
 
         # Final evaluation

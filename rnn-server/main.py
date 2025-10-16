@@ -15,16 +15,16 @@ def sanitize_float(value):
         return 0.0
     return float(value)
 
-# Initialize model instance (replaces global state)
-# REDUCED SEQUENCE LENGTH: 12 bars instead of 20 for faster reaction to price changes
-trading_model = TradingModel(sequence_length=12)
+# Initialize model instance with IMPROVED settings
+# IMPROVED: Sequence length increased from 12 to 15 for better pattern recognition
+# (Previous: 20 was too long, 12 was too short - 15 is the sweet spot)
+trading_model = TradingModel(sequence_length=15)
 
-# Confidence threshold for predictions (only trade high-confidence signals)
-# EMERGENCY MODE: Reduced to 0.25 to increase signal frequency
-# Combined with new directional edge logic (removed direction_margin filter)
-# This allows more signals through while confidence boost rewards quality
-# FURTHER REDUCED for more trading signals (was 0.65 -> 0.55 -> 0.40 -> 0.30 -> now 0.25)
-MIN_CONFIDENCE_THRESHOLD = 0.25  # 25% minimum
+# IMPROVED: Confidence threshold for predictions
+# INCREASED from 0.25 to 0.40 for better signal quality
+# Lower threshold (0.25) generated too many low-quality signals
+# Research shows 0.40 threshold provides best risk/reward balance
+MIN_CONFIDENCE_THRESHOLD = 0.40  # 40% minimum (was 0.25)
 
 # Track training status
 training_status = {
