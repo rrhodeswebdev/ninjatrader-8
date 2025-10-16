@@ -2285,6 +2285,14 @@ class TradingModel:
         else:
             features_scaled = self.scaler.transform(features)
 
+        # IMPORTANT: Check for NaN/inf values after scaling and replace with 0
+        # This can happen with division by zero or when scaler hasn't been fitted
+        nan_mask = np.isnan(features_scaled) | np.isinf(features_scaled)
+        if nan_mask.any():
+            nan_count = nan_mask.sum()
+            print(f"WARNING: Found {nan_count} NaN/inf values in scaled features, replacing with 0")
+            features_scaled = np.nan_to_num(features_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+
         # Create sequences with improved labeling
         X, y = [], []
         lookahead_bars = 3  # Look ahead 3 bars to reduce noise
@@ -2780,6 +2788,17 @@ class TradingModel:
             prob_hold = probabilities[1].item()
             prob_long = probabilities[2].item()
 
+            # Check for NaN in model outputs (indicates untrained model or bad input)
+            if math.isnan(prob_short) or math.isnan(prob_hold) or math.isnan(prob_long):
+                print(f"ERROR: Model output contains NaN - model may not be trained or input has NaN values")
+                print(f"  Probabilities: SHORT={prob_short}, HOLD={prob_hold}, LONG={prob_long}")
+                print(f"  Model trained: {self.is_trained}")
+                print(f"  Input shape: {X_tensor.shape}")
+                # Check if input contains NaN
+                if torch.isnan(X_tensor).any():
+                    print(f"  WARNING: Input tensor contains NaN values!")
+                return 'hold', 0.0
+
             # NEW APPROACH: Use simple argmax but normalize directional conviction
             # This increases signal frequency while maintaining quality via confidence threshold
             # Calculate directional edge: how much stronger is the best direction vs the other?
@@ -2801,9 +2820,9 @@ class TradingModel:
             if predicted_class in [0, 2] and directional_edge > 0.10:  # 10% edge between directions
                 confidence = min(1.0, confidence * 1.15)  # 15% confidence boost for clear direction
 
-            # Handle NaN/inf in confidence
+            # Handle NaN/inf in confidence (should not happen after checks above)
             if not isinstance(confidence, (int, float)) or math.isnan(confidence) or math.isinf(confidence):
-                print(f"WARNING: Invalid confidence value: {confidence}, using 0.0")
+                print(f"WARNING: Invalid confidence value after calculation: {confidence}, using 0.0")
                 confidence = 0.0
 
             # Log all probabilities for debugging
