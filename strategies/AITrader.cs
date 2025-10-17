@@ -58,29 +58,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private Grid buttonGrid;
         private bool areButtonsAdded = false;
 
-        // Dashboard state tracking
-        private string lastSignal = "N/A";
-        private double lastConfidence = 0.0;
-        private DateTime lastSignalTime = DateTime.MinValue;
-        private int totalSignals = 0;
-        private int longSignals = 0;
-        private int shortSignals = 0;
-        private int holdSignals = 0;
+        // Server connection tracking
         private bool serverConnected = false;
         private string serverStatus = "Connecting...";
-
-        // Dashboard rendering
-        private System.Windows.Media.Typeface dashboardTypeface;
-        private System.Windows.Media.SolidColorBrush backgroundBrush;
-        private System.Windows.Media.SolidColorBrush textBrush;
-        private System.Windows.Media.SolidColorBrush headerBrush;
-        private System.Windows.Media.SolidColorBrush longBrush;
-        private System.Windows.Media.SolidColorBrush shortBrush;
-        private System.Windows.Media.SolidColorBrush holdBrush;
-
-        // Cached SharpDX objects for performance
-        private SharpDX.DirectWrite.TextFormat cachedTextFormat;
-        private bool needsChartRefresh = false;
 
         protected override void OnStateChange()
         {
@@ -126,29 +106,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.DataLoaded)
             {
-                // Initialize dashboard brushes and fonts
-                dashboardTypeface = new System.Windows.Media.Typeface(new System.Windows.Media.FontFamily("Arial"),
-                    System.Windows.FontStyles.Normal, System.Windows.FontWeights.Bold, System.Windows.FontStretches.Normal);
-
-                backgroundBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(200, 20, 20, 30));
-                textBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
-                headerBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(255, 100, 150, 255));
-                longBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.LimeGreen);
-                shortBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Red);
-                holdBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Yellow);
-
-                backgroundBrush.Freeze();
-                textBrush.Freeze();
-                headerBrush.Freeze();
-                longBrush.Freeze();
-                shortBrush.Freeze();
-                holdBrush.Freeze();
-
-                // Cache SharpDX TextFormat for reuse (major performance improvement)
-                cachedTextFormat = new SharpDX.DirectWrite.TextFormat(
-                    Core.Globals.DirectWriteFactory, "Arial", SharpDX.DirectWrite.FontWeight.Bold,
-                    SharpDX.DirectWrite.FontStyle.Normal, 16);
-
                 // Add buttons to Chart Trader after data is loaded
                 if (ChartControl != null)
                 {
@@ -164,13 +121,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     httpClient = null;
                 }
 
-                // Clean up cached SharpDX objects
-                if (cachedTextFormat != null)
-                {
-                    cachedTextFormat.Dispose();
-                    cachedTextFormat = null;
-                }
-
                 // Remove buttons
                 if (ChartControl != null)
                 {
@@ -179,123 +129,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
-        {
-            base.OnRender(chartControl, chartScale);
-
-            // Skip rendering if cached format not initialized yet
-            if (cachedTextFormat == null)
-                return;
-
-            // Dashboard position (top-left corner)
-            double x = 20;
-            double y = 60;
-            double width = 400;
-            double lineHeight = 28;
-
-            // Create the background rectangle (increased height for daily P&L info)
-            SharpDX.RectangleF backgroundRect = new SharpDX.RectangleF((float)x, (float)y, (float)width, (float)(lineHeight * 17));
-            RenderTarget.FillRectangle(backgroundRect, backgroundBrush.ToDxBrush(RenderTarget));
-
-            // Optimized helper function - reuses cached TextFormat, only creates/disposes TextLayout
-            System.Action<string, double, double, System.Windows.Media.Brush> drawText = (text, textX, textY, brush) =>
-            {
-                SharpDX.DirectWrite.TextLayout textLayout = new SharpDX.DirectWrite.TextLayout(
-                    Core.Globals.DirectWriteFactory, text, cachedTextFormat, (float)width, (float)lineHeight);
-
-                RenderTarget.DrawTextLayout(new SharpDX.Vector2((float)textX, (float)textY),
-                    textLayout, brush.ToDxBrush(RenderTarget), SharpDX.Direct2D1.DrawTextOptions.None);
-
-                textLayout.Dispose();
-            };
-
-            double currentY = y + 8;
-
-            // Header
-            drawText("AI TRADER DASHBOARD", x + 15, currentY, headerBrush);
-            currentY += lineHeight + 8;
-
-            // Server Status
-            var statusBrush = serverConnected ? longBrush : shortBrush;
-            drawText("Server: " + serverStatus, x + 15, currentY, statusBrush);
-            currentY += lineHeight;
-
-            // Trading Mode
-            string mode = !tradingEnabled ? "STOPPED" :
-                         (allowLongTrades && allowShortTrades) ? "BOTH" :
-                         allowLongTrades ? "LONGS ONLY" : "SHORTS ONLY";
-            var modeBrush = !tradingEnabled ? shortBrush :
-                           (allowLongTrades && allowShortTrades) ? longBrush :
-                           allowLongTrades ? longBrush : shortBrush;
-            drawText("Mode: " + mode, x + 15, currentY, modeBrush);
-            currentY += lineHeight + 8;
-
-            // Last Signal
-            drawText("LAST SIGNAL", x + 15, currentY, headerBrush);
-            currentY += lineHeight;
-
-            var signalBrush = lastSignal.ToUpper() == "LONG" ? longBrush :
-                             lastSignal.ToUpper() == "SHORT" ? shortBrush :
-                             lastSignal.ToUpper() == "HOLD" ? holdBrush : textBrush;
-            drawText("Signal: " + lastSignal.ToUpper(), x + 15, currentY, signalBrush);
-            currentY += lineHeight;
-
-            drawText("Confidence: " + (lastConfidence * 100).ToString("F2") + "%", x + 15, currentY, textBrush);
-            currentY += lineHeight;
-
-            if (lastSignalTime != DateTime.MinValue)
-            {
-                drawText("Time: " + lastSignalTime.ToString("HH:mm:ss"), x + 15, currentY, textBrush);
-            }
-            currentY += lineHeight + 8;
-
-            // Signal Statistics
-            drawText("SIGNAL STATS", x + 15, currentY, headerBrush);
-            currentY += lineHeight;
-
-            drawText("Total: " + totalSignals, x + 15, currentY, textBrush);
-            currentY += lineHeight;
-
-            drawText("Long: " + longSignals + " (" + (totalSignals > 0 ? (longSignals * 100.0 / totalSignals).ToString("F1") : "0") + "%)", x + 15, currentY, longBrush);
-            currentY += lineHeight;
-
-            drawText("Short: " + shortSignals + " (" + (totalSignals > 0 ? (shortSignals * 100.0 / totalSignals).ToString("F1") : "0") + "%)", x + 15, currentY, shortBrush);
-            currentY += lineHeight;
-
-            drawText("Hold: " + holdSignals + " (" + (totalSignals > 0 ? (holdSignals * 100.0 / totalSignals).ToString("F1") : "0") + "%)", x + 15, currentY, holdBrush);
-            currentY += lineHeight + 8;
-
-            // Daily P&L Section
-            drawText("DAILY P&L", x + 15, currentY, headerBrush);
-            currentY += lineHeight;
-
-            var pnlBrush = dailyPnL >= 0 ? longBrush : shortBrush;
-            drawText("Current: " + dailyPnL.ToString("C2"), x + 15, currentY, pnlBrush);
-            currentY += lineHeight;
-
-            drawText("Goal: " + dailyProfitGoal.ToString("C2"), x + 15, currentY, longBrush);
-            currentY += lineHeight;
-
-            drawText("Max Loss: -" + dailyMaxLoss.ToString("C2"), x + 15, currentY, shortBrush);
-            currentY += lineHeight;
-
-            // Progress bar for daily P&L
-            double progressPercent = 0.0;
-            System.Windows.Media.Brush progressBrush = textBrush;
-
-            if (dailyPnL >= 0)
-            {
-                progressPercent = Math.Min(100, (dailyPnL / dailyProfitGoal) * 100);
-                progressBrush = longBrush;
-            }
-            else
-            {
-                progressPercent = Math.Min(100, (Math.Abs(dailyPnL) / dailyMaxLoss) * 100);
-                progressBrush = shortBrush;
-            }
-
-            drawText("Progress: " + progressPercent.ToString("F1") + "%", x + 15, currentY, progressBrush);
-        }
 
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled, double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string nativeError)
         {
@@ -671,19 +504,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 
                                 Print("Risk Management - SL: " + stopLoss.ToString("F2") + ", TP: " + takeProfit.ToString("F2"));
                             }
-
-                            // Update dashboard state
-                            lastSignal = signal;
-                            lastConfidence = confidence;
-                            lastSignalTime = DateTime.Now;
-                            totalSignals++;
-
-                            if (signal == "long")
-                                longSignals++;
-                            else if (signal == "short")
-                                shortSignals++;
-                            else if (signal == "hold")
-                                holdSignals++;
 
                             Print("AI Signal: " + signal.ToUpper() + " (" + (confidence * 100).ToString("F2") + "%)");
 

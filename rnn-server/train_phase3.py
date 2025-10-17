@@ -69,14 +69,19 @@ def generate_synthetic_data(n_bars=3000):
     return df
 
 
-def train_primary_model(df: pd.DataFrame, epochs: int = 50):
-    """Train primary trading model"""
+def train_primary_model(df: pd.DataFrame, epochs: int = 100):
+    """Train primary trading model with optimized hyperparameters"""
     print("\n" + "="*70)
-    print("STEP 1: TRAINING PRIMARY MODEL")
+    print("STEP 1: TRAINING PRIMARY MODEL (OPTIMIZED)")
     print("="*70)
 
-    model = TradingModel(sequence_length=40)
-    model.train(df, epochs=epochs, batch_size=32, validation_split=0.2)
+    # PERFORMANCE OPTIMIZATION: Updated hyperparameters
+    # - Increased batch size from 32 to 64 (with gradient accumulation = effective 256)
+    # - Reduced learning rate from 0.001 to 0.0005 for better convergence
+    # - Increased default epochs from 50 to 100
+    # - Reduced sequence length from 40 to 15 (better for 1-min data)
+    model = TradingModel(sequence_length=15)
+    model.train(df, epochs=epochs, batch_size=64, learning_rate=0.0005, validation_split=0.2)
     model.save_model()
 
     print("\n✅ Primary model training complete")
@@ -252,8 +257,8 @@ def main():
                         help='Train meta-labeling filter')
     parser.add_argument('--validate', action='store_true',
                         help='Validate all systems')
-    parser.add_argument('--epochs', type=int, default=50,
-                        help='Training epochs (default: 50)')
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='Training epochs (default: 100 - optimized)')
     parser.add_argument('--meta-epochs', type=int, default=100,
                         help='Meta-labeling epochs (default: 100)')
 

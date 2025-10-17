@@ -299,6 +299,33 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
         # Update historical data (both timeframes)
         current_data = trading_model.update_historical_data(new_bar, new_bar_secondary)
 
+        # CHECK IF MODEL IS TRAINING - Block predictions during training
+        if training_status["is_training"]:
+            print("\n" + "="*50)
+            print("⚠️  MODEL IS TRAINING - Returning HOLD signal")
+            print("="*50 + "\n")
+            return {
+                "status": "training",
+                "message": "Model is currently training. No predictions available.",
+                "signal": "hold",
+                "confidence": 0.0,
+                "model_training": True,
+                "training_progress": training_status["progress"]
+            }
+
+        # CHECK IF MODEL IS TRAINED - Block predictions if model not ready
+        if not trading_model.is_trained:
+            print("\n" + "="*50)
+            print("⚠️  MODEL NOT TRAINED - Returning HOLD signal")
+            print("="*50 + "\n")
+            return {
+                "status": "not_trained",
+                "message": "Model is not trained yet. No predictions available.",
+                "signal": "hold",
+                "confidence": 0.0,
+                "model_trained": False
+            }
+
         # Make prediction with risk management parameters
         try:
             # Get account balance from request (default to $25,000)
