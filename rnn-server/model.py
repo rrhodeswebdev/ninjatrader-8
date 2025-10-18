@@ -15,6 +15,17 @@ import time
 from functools import wraps
 from trading_metrics import evaluate_trading_performance, calculate_sharpe_ratio
 
+# ROUND 2 IMPROVEMENTS: Import advanced modules
+try:
+    from advanced_loss_functions import CombinedTradingLoss, LabelSmoothingCrossEntropy
+    from improved_label_generation import calculate_triple_barrier_labels, calculate_regime_adaptive_labels
+    from confidence_calibration_advanced import EnsembleCalibration, TemperatureScaling
+    ADVANCED_MODULES_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️  Advanced modules not available: {e}")
+    print("   Run with standard functionality. Install advanced modules for improvements.")
+    ADVANCED_MODULES_AVAILABLE = False
+
 # PERFORMANCE OPTIMIZATION: Add timing decorator
 def timing_decorator(func):
     @wraps(func)
@@ -1975,10 +1986,24 @@ class TradingModel:
         self.recent_predictions = []
         self.max_recent_predictions = 50
 
+        # ROUND 2 IMPROVEMENT: Confidence calibration support
+        self.calibration = None
+        if ADVANCED_MODULES_AVAILABLE:
+            try:
+                self.calibration = EnsembleCalibration()
+                calib_path = Path('models/calibration')
+                if calib_path.exists():
+                    self.calibration.load(str(calib_path))
+                    print("✓ Loaded confidence calibration")
+            except Exception as e:
+                print(f"⚠️  Could not load calibration: {e}")
+                self.calibration = None
+
         print(f"Using device: {self.device}")
         print(f"Model: ImprovedTradingRNN with {self.model.count_parameters():,} parameters")
         print(f"Sequence length: {self.sequence_length}")
         print(f"Input features: 99")
+        print(f"Calibration: {'Enabled' if self.calibration else 'Disabled'}")
         self.model.to(self.device)
 
         # Try to load existing model first
@@ -2043,7 +2068,7 @@ class TradingModel:
             df['ask_volume'] = 0.0
 
     @timing_decorator
-    def prepare_data(self, df, df_secondary=None, fit_scaler=False, adaptive_threshold=True):
+    def prepare_data(self, df, df_secondary=None, fit_scaler=False, adaptive_threshold=True, use_triple_barrier=False):
         """
         Prepare data for training with enhanced features including multi-timeframe (OPTIMIZED VERSION)
         Creates sequences and labels based on future price movement
@@ -2053,6 +2078,7 @@ class TradingModel:
             df_secondary: Optional secondary timeframe DataFrame (e.g., 5-min)
             fit_scaler: If True, fit the scaler. If False, only transform (use False for inference)
             adaptive_threshold: If True, calculate threshold based on data volatility
+            use_triple_barrier: If True, use Triple Barrier Method for labels (ROUND 2 IMPROVEMENT)
         """
         self._validate_data(df)
 
@@ -2452,62 +2478,87 @@ class TradingModel:
         X, y = [], []
         lookahead_bars = 3  # Look ahead 3 bars to reduce noise
 
-        # First pass: Calculate all price changes for percentile-based thresholding
-        all_price_changes = []
-        for i in range(len(features_scaled) - self.sequence_length - lookahead_bars + 1):
-            current_close = ohlc[i + self.sequence_length - 1, 3]
+        # ROUND 2 IMPROVEMENT: Option to use Triple Barrier Method for labels
+        if use_triple_barrier and ADVANCED_MODULES_AVAILABLE:
+            if fit_scaler:
+                print(f"\n{'='*50}")
+                print("USING TRIPLE BARRIER METHOD FOR LABELS")
+                print(f"{'='*50}")
 
-            # Use maximum move in next 3 bars (captures best opportunity)
-            future_slice = ohlc[i + self.sequence_length:i + self.sequence_length + lookahead_bars]
-            future_highs = future_slice[:, 1]
-            future_lows = future_slice[:, 2]
+            # Generate labels using Triple Barrier Method
+            labels_full = calculate_triple_barrier_labels(
+                df,
+                profit_taking_multiple=2.0,
+                stop_loss_multiple=1.0,
+                max_holding_period=10,
+                min_return_threshold=0.0015
+            )
 
-            max_up_move = (np.max(future_highs) - current_close) / current_close * 100
-            max_down_move = (current_close - np.min(future_lows)) / current_close * 100
+            # Create sequences with pre-calculated labels
+            for i in range(len(features_scaled) - self.sequence_length):
+                if i + self.sequence_length < len(labels_full):
+                    X.append(features_scaled[i:i + self.sequence_length])
+                    y.append(labels_full[i + self.sequence_length - 1])
 
-            # Store the dominant move
-            if max_up_move > max_down_move:
-                all_price_changes.append(max_up_move)
-            else:
-                all_price_changes.append(-max_down_move)
+        else:
+            # Original percentile-based labeling
+            # First pass: Calculate all price changes for percentile-based thresholding
+            all_price_changes = []
+            for i in range(len(features_scaled) - self.sequence_length - lookahead_bars + 1):
+                current_close = ohlc[i + self.sequence_length - 1, 3]
 
-        all_price_changes = np.array(all_price_changes)
-        abs_changes = np.abs(all_price_changes)
+                # Use maximum move in next 3 bars (captures best opportunity)
+                future_slice = ohlc[i + self.sequence_length:i + self.sequence_length + lookahead_bars]
+                future_highs = future_slice[:, 1]
+                future_lows = future_slice[:, 2]
 
-        # Percentile-based threshold: 40% smallest moves become HOLD
-        hold_percentage = 0.40
-        percentile_threshold = np.percentile(abs_changes, hold_percentage * 100)
+                max_up_move = (np.max(future_highs) - current_close) / current_close * 100
+                max_down_move = (current_close - np.min(future_lows)) / current_close * 100
 
-        if fit_scaler:
-            print(f"\n{'='*50}")
-            print("LABEL GENERATION STATISTICS")
-            print(f"{'='*50}")
-            print(f"Lookahead: {lookahead_bars} bars")
-            print(f"Target HOLD percentage: {hold_percentage*100:.0f}%")
-            print(f"Percentile threshold: {percentile_threshold:.4f}%")
-            print(f"Price change range: [{np.min(all_price_changes):.4f}%, {np.max(all_price_changes):.4f}%]")
+                # Store the dominant move
+                if max_up_move > max_down_move:
+                    all_price_changes.append(max_up_move)
+                else:
+                    all_price_changes.append(-max_down_move)
 
-        # Second pass: Create sequences and labels using the threshold
-        for i in range(len(features_scaled) - self.sequence_length - lookahead_bars + 1):
-            X.append(features_scaled[i:i + self.sequence_length])
+            all_price_changes = np.array(all_price_changes)
+            abs_changes = np.abs(all_price_changes)
 
-            current_close = ohlc[i + self.sequence_length - 1, 3]
+            # Percentile-based threshold: 25% smallest moves become HOLD (IMPROVED from 0.40)
+            # Lower HOLD percentage = more directional signals = higher confidence
+            hold_percentage = 0.25
+            percentile_threshold = np.percentile(abs_changes, hold_percentage * 100)
 
-            # Use maximum move in next 3 bars
-            future_slice = ohlc[i + self.sequence_length:i + self.sequence_length + lookahead_bars]
-            future_highs = future_slice[:, 1]
-            future_lows = future_slice[:, 2]
+            if fit_scaler:
+                print(f"\n{'='*50}")
+                print("LABEL GENERATION STATISTICS")
+                print(f"{'='*50}")
+                print(f"Lookahead: {lookahead_bars} bars")
+                print(f"Target HOLD percentage: {hold_percentage*100:.0f}%")
+                print(f"Percentile threshold: {percentile_threshold:.4f}%")
+                print(f"Price change range: [{np.min(all_price_changes):.4f}%, {np.max(all_price_changes):.4f}%]")
 
-            max_up_move = (np.max(future_highs) - current_close) / current_close * 100
-            max_down_move = (current_close - np.min(future_lows)) / current_close * 100
+            # Second pass: Create sequences and labels using the threshold
+            for i in range(len(features_scaled) - self.sequence_length - lookahead_bars + 1):
+                X.append(features_scaled[i:i + self.sequence_length])
 
-            # Create label based on dominant move and threshold
-            if max_up_move > percentile_threshold and max_up_move > max_down_move:
-                y.append(2)  # Long
-            elif max_down_move > percentile_threshold and max_down_move > max_up_move:
-                y.append(0)  # Short
-            else:
-                y.append(1)  # Hold
+                current_close = ohlc[i + self.sequence_length - 1, 3]
+
+                # Use maximum move in next 3 bars
+                future_slice = ohlc[i + self.sequence_length:i + self.sequence_length + lookahead_bars]
+                future_highs = future_slice[:, 1]
+                future_lows = future_slice[:, 2]
+
+                max_up_move = (np.max(future_highs) - current_close) / current_close * 100
+                max_down_move = (current_close - np.min(future_lows)) / current_close * 100
+
+                # Create label based on dominant move and threshold
+                if max_up_move > percentile_threshold and max_up_move > max_down_move:
+                    y.append(2)  # Long
+                elif max_down_move > percentile_threshold and max_down_move > max_up_move:
+                    y.append(0)  # Short
+                else:
+                    y.append(1)  # Hold
 
         X = np.array(X)
         y = np.array(y)
@@ -2621,10 +2672,20 @@ class TradingModel:
         print(f"Class weights (ENS): Short={class_weights[0]:.4f}, Hold={class_weights[1]:.4f}, Long={class_weights[2]:.4f}")
         print(f"Weight ratios - Short/Hold: {class_weights[0]/class_weights[1]:.2f}x, Short/Long: {class_weights[0]/class_weights[2]:.2f}x")
 
-        # IMPROVED: Training setup with FocalLoss (better for imbalanced classes)
-        # Note: ProfitWeightedLoss requires price_changes which aren't available in mini-batch training
-        # FocalLoss focuses on hard examples and works well with class imbalance
-        criterion = FocalLoss(gamma=2.0, weight=class_weights)
+        # ROUND 2 IMPROVEMENT: Use CombinedTradingLoss for better confidence and accuracy
+        # Combines label smoothing, confidence penalty, and directional accuracy
+        # Falls back to FocalLoss if advanced modules not available
+        if ADVANCED_MODULES_AVAILABLE:
+            criterion = CombinedTradingLoss(
+                smoothing=0.1,           # Prevents overconfidence
+                confidence_weight=0.15,  # Rewards high confidence when correct
+                directional_weight=1.5,  # Penalizes wrong direction more
+                use_sharpe=False         # Set to True if you pass returns
+            )
+            print("✓ Using CombinedTradingLoss (label smoothing + confidence penalty + directional)")
+        else:
+            criterion = FocalLoss(gamma=2.0, weight=class_weights)
+            print("⚠️  Using FocalLoss (advanced modules not available)")
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
         # PERFORMANCE OPTIMIZATION: Better scheduler for faster convergence
@@ -3075,7 +3136,16 @@ class TradingModel:
         ens_weights = torch.FloatTensor((1.0 - beta) / effective_nums)
         class_weights = ens_weights.to(self.device)
 
-        criterion = FocalLoss(gamma=2.0, weight=class_weights)
+        # ROUND 2 IMPROVEMENT: Use CombinedTradingLoss
+        if ADVANCED_MODULES_AVAILABLE:
+            criterion = CombinedTradingLoss(
+                smoothing=0.1,
+                confidence_weight=0.15,
+                directional_weight=1.5,
+                use_sharpe=False
+            )
+        else:
+            criterion = FocalLoss(gamma=2.0, weight=class_weights)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, T_0=10, T_mult=2, eta_min=learning_rate * 0.001
@@ -3207,7 +3277,23 @@ class TradingModel:
             if self.device.type == 'cuda':
                 outputs = outputs.float()  # Convert back to FP32 for softmax
 
-            probabilities = torch.softmax(outputs, dim=1)[0]
+            # ROUND 2 IMPROVEMENT: Apply confidence calibration if available
+            if self.calibration is not None:
+                try:
+                    # Calibrate probabilities using temperature scaling
+                    logits = outputs
+                    raw_probs = torch.softmax(logits, dim=1)
+                    calibrated_probs = self.calibration.calibrate(
+                        logits,
+                        raw_probs,
+                        method='temperature'
+                    )
+                    probabilities = calibrated_probs[0]
+                except Exception as e:
+                    print(f"⚠️  Calibration failed, using raw probabilities: {e}")
+                    probabilities = torch.softmax(outputs, dim=1)[0]
+            else:
+                probabilities = torch.softmax(outputs, dim=1)[0]
 
             # IMPROVED: Compare LONG vs SHORT probabilities directly (ignore HOLD bias)
             # This overcomes model trained with 40% HOLD
@@ -3242,10 +3328,27 @@ class TradingModel:
                 predicted_class = 1  # Hold
                 confidence = prob_hold
 
-            # Quality gate: Boost confidence only if directional edge is strong
-            # This rewards clear directional conviction without filtering signals
-            if predicted_class in [0, 2] and directional_edge > 0.10:  # 10% edge between directions
-                confidence = min(1.0, confidence * 1.15)  # 15% confidence boost for clear direction
+            # DEBUG: Log raw confidence before boost
+            raw_confidence = confidence
+            print(f"🔍 Raw confidence (before boost): {raw_confidence:.3f}")
+
+            # IMPROVED: Multi-level confidence boost based on directional conviction
+            # Rewards clear directional signals with higher confidence
+            # FIXED: Reduced boost multipliers to prevent 100% confidence
+            if predicted_class in [0, 2]:  # Only boost directional signals (LONG/SHORT)
+                if directional_edge > 0.20:  # Very strong conviction (20%+ edge)
+                    confidence = min(0.95, confidence * 1.15)  # 15% boost, cap at 95%
+                elif directional_edge > 0.15:  # Strong conviction (15-20% edge)
+                    confidence = min(0.90, confidence * 1.10)  # 10% boost, cap at 90%
+                elif directional_edge > 0.10:  # Moderate conviction (10-15% edge)
+                    confidence = min(0.85, confidence * 1.05)  # 5% boost, cap at 85%
+                # Weak edge (<10%): no boost
+
+            if raw_confidence > 0:
+                boost_pct = (confidence/raw_confidence - 1)*100
+            else:
+                boost_pct = 0
+            print(f"🔍 Final confidence (after boost): {confidence:.3f} (boost: {boost_pct:.1f}%)")
 
             # Handle NaN/inf in confidence (should not happen after checks above)
             if not isinstance(confidence, (int, float)) or math.isnan(confidence) or math.isinf(confidence):
@@ -3494,8 +3597,15 @@ class TradingModel:
             )
             atr = atr_values[-1] if len(atr_values) > 0 else 15.0  # Default to 15 points
 
+        # DEBUG: Log ATR and data size
+        print(f"\n🔍 RISK CALCULATION DEBUG:")
+        print(f"   Historical bars: {len(recent_bars_df)}")
+        print(f"   ATR: {atr:.2f} points")
+        print(f"   Entry price: ${entry_price:.2f}")
+
         # Get regime
         regime = detect_market_regime(recent_bars_df, lookback=min(100, len(recent_bars_df)-1))
+        print(f"   Regime: {regime}")
 
         # Calculate trade parameters using risk manager
         risk_mgr = RiskManager()

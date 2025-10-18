@@ -21,10 +21,10 @@ def sanitize_float(value):
 trading_model = TradingModel(sequence_length=15)
 
 # IMPROVED: Confidence threshold for predictions
-# INCREASED from 0.25 to 0.40 for better signal quality
-# Lower threshold (0.25) generated too many low-quality signals
-# Research shows 0.40 threshold provides best risk/reward balance
-MIN_CONFIDENCE_THRESHOLD = 0.40  # 40% minimum (was 0.25)
+# LOWERED from 0.40 back to 0.25 to allow more trading opportunities
+# NOTE: 0.40 was filtering out too many valid signals
+# The Round 2 improvements have better confidence calibration, so 0.25 is safe
+MIN_CONFIDENCE_THRESHOLD = 0.25  # 25% minimum (was 0.40, reduced for more signals)
 
 # Track training status
 training_status = {
@@ -88,17 +88,39 @@ def train_model_background(df: pd.DataFrame):
         training_status["progress"] = "Training started..."
         training_status["error"] = None
 
+        print("\n" + "="*70)
+        print("BACKGROUND TRAINING STARTED")
+        print("="*70)
+
         # Train the model
         trading_model.train(df, epochs=100, batch_size=32)
 
+        # Explicitly save the model after training
+        print("\n" + "="*70)
+        print("SAVING TRAINED MODEL")
+        print("="*70)
+        trading_model.save_model()
+
+        # Verify model is marked as trained
+        print(f"Model is_trained status: {trading_model.is_trained}")
+
         training_status["is_training"] = False
-        training_status["progress"] = "Training complete"
+        training_status["progress"] = "Training complete - model saved"
+
+        print("\n" + "="*70)
+        print("✅ BACKGROUND TRAINING COMPLETE")
+        print(f"   Model trained: {trading_model.is_trained}")
+        print(f"   Model saved: models/trading_model.pth")
+        print("   Ready for predictions!")
+        print("="*70 + "\n")
 
     except Exception as e:
         training_status["is_training"] = False
         training_status["error"] = str(e)
         training_status["progress"] = f"Training failed: {e}"
-        print(f"Training error: {e}")
+        print(f"\n❌ Training error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.post("/analysis")
@@ -317,13 +339,53 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
         if not trading_model.is_trained:
             print("\n" + "="*50)
             print("⚠️  MODEL NOT TRAINED - Returning HOLD signal")
+            print("="*50)
+            print(f"   Model is_trained flag: {trading_model.is_trained}")
+            print(f"   Training status: {training_status['is_training']}")
+            print(f"   Training progress: {training_status['progress']}")
+
+            # Check if model file exists
+            import os
+            model_exists = os.path.exists('models/trading_model.pth')
+            print(f"   Model file exists: {model_exists}")
+
+            if model_exists:
+                print("   ⚠️  Model file exists but is_trained=False!")
+                print("   Try reloading the model or check training logs")
+
             print("="*50 + "\n")
             return {
                 "status": "not_trained",
                 "message": "Model is not trained yet. No predictions available.",
                 "signal": "hold",
                 "confidence": 0.0,
-                "model_trained": False
+                "model_trained": False,
+                "training_status": training_status["progress"]
+            }
+
+        # CHECK DAILY MAX LOSS - Block new trades if daily loss limit hit
+        daily_pnl = request.get('dailyPnL', 0.0)
+        daily_max_loss = request.get('dailyMaxLoss', 0.0)
+
+        if daily_max_loss > 0 and daily_pnl <= -daily_max_loss:
+            print("\n" + "="*50)
+            print("🛑 DAILY MAX LOSS HIT - BLOCKING NEW TRADES")
+            print("="*50)
+            print(f"Daily P&L: ${daily_pnl:.2f}")
+            print(f"Max Loss Limit: ${daily_max_loss:.2f}")
+            print(f"Loss Exceeded By: ${abs(daily_pnl + daily_max_loss):.2f}")
+            print("Returning HOLD to prevent new entries")
+            print("="*50 + "\n")
+
+            return {
+                "status": "max_loss_hit",
+                "message": f"Daily max loss of ${daily_max_loss:.2f} has been exceeded. Current P&L: ${daily_pnl:.2f}",
+                "signal": "hold",
+                "confidence": 0.0,
+                "daily_pnl": sanitize_float(daily_pnl),
+                "daily_max_loss": sanitize_float(daily_max_loss),
+                "loss_exceeded": True,
+                "exceeded_by": sanitize_float(abs(daily_pnl + daily_max_loss))
             }
 
         # Make prediction with risk management parameters

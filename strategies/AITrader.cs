@@ -24,7 +24,7 @@ namespace NinjaTrader.NinjaScript.Strategies
     public class AITrader : Strategy
     {
         private HttpClient httpClient;
-        private string serverUrl = "https://2f73a7f4d7fe.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
+        private string serverUrl = "https://118cc023e21f.ngrok-free.app/analysis"; // Change to "http://YOUR_LOCAL_IP:8000/analysis" for VPS access
         private bool historicalDataSent = false;
         private int historicalBarsToSend = 2000; // Configurable parameter (1 week of 1-min bars)
 
