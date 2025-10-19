@@ -1260,6 +1260,53 @@ class FocalLoss(nn.Module):
         return focal_loss
 
 
+class TrendAwareTradingLoss(nn.Module):
+    """
+    PRIORITY 2: Loss function that penalizes counter-trend trades more heavily
+    and rewards with-trend trades
+    """
+    def __init__(self, base_weight=1.0, trend_penalty_weight=0.5):
+        super().__init__()
+        self.base_weight = base_weight
+        self.trend_penalty_weight = trend_penalty_weight
+        self.ce_loss = nn.CrossEntropyLoss(reduction='none')
+
+    def forward(self, logits, targets, trend_features=None):
+        # Base cross-entropy loss
+        base_loss = self.ce_loss(logits, targets)
+
+        if trend_features is None:
+            return base_loss.mean()
+
+        # trend_features should be (batch_size, 2) with [hurst, trend_strength]
+        hurst = trend_features[:, 0]
+        trend_strength = trend_features[:, 1]
+
+        # Get predictions
+        preds = torch.argmax(logits, dim=1)
+
+        # Calculate trend alignment penalty
+        # 0=short, 1=hold, 2=long
+        # Penalty when: (trending_up AND pred=short) OR (trending_down AND pred=long)
+        trending_up = (hurst > 0.55) & (trend_strength > 2)
+        trending_down = (hurst > 0.55) & (trend_strength < -2)
+
+        counter_trend_penalty = torch.zeros_like(base_loss)
+
+        # Penalize counter-trend trades
+        counter_trend_penalty[trending_up & (preds == 0)] = self.trend_penalty_weight  # SHORT in uptrend
+        counter_trend_penalty[trending_down & (preds == 2)] = self.trend_penalty_weight  # LONG in downtrend
+
+        # Reward with-trend trades (reduce loss)
+        counter_trend_penalty[trending_up & (preds == 2)] = -self.trend_penalty_weight * 0.5  # LONG in uptrend
+        counter_trend_penalty[trending_down & (preds == 0)] = -self.trend_penalty_weight * 0.5  # SHORT in downtrend
+
+        # Combined loss
+        total_loss = base_loss + counter_trend_penalty
+
+        return total_loss.mean()
+
+
 class LabelSmoothingLoss(nn.Module):
     """
     Label Smoothing Loss - prevents overconfident predictions
@@ -1969,9 +2016,9 @@ class TradingModel:
     Wrapper class for training and prediction with state management
     """
     def __init__(self, sequence_length=15, model_path='models/trading_model.pth'):
-        # IMPROVED: Updated input_size from 86 to 99, sequence_length from 40 to 15
-        # IMPROVED: Reduced num_layers from 3 to 2 for better generalization
-        self.model = ImprovedTradingRNN(input_size=99, hidden_size=128, num_layers=2, output_size=3)
+        # IMPROVED: Updated input_size from 99 to 105 (added 6 trend boost features)
+        # IMPROVED: sequence_length=15, num_layers=2 for better generalization
+        self.model = ImprovedTradingRNN(input_size=105, hidden_size=128, num_layers=2, output_size=3)
         self.scaler = StandardScaler()
         self.sequence_length = sequence_length
         self.is_trained = False
@@ -2002,7 +2049,7 @@ class TradingModel:
         print(f"Using device: {self.device}")
         print(f"Model: ImprovedTradingRNN with {self.model.count_parameters():,} parameters")
         print(f"Sequence length: {self.sequence_length}")
-        print(f"Input features: 99")
+        print(f"Input features: 105 (including 6 trend boost features)")
         print(f"Calibration: {'Enabled' if self.calibration else 'Disabled'}")
         self.model.to(self.device)
 
@@ -2449,16 +2496,26 @@ class TradingModel:
             velocity_lag1,                             # 1
             velocity_lag2,                             # 1
             cum_delta_lag1,                            # 1
-            cum_delta_lag2                             # 1
+            cum_delta_lag2,                            # 1
+            # PRIORITY 3: TREND BOOST - Duplicate critical trend features to increase their weight
+            # These emphasized features help the model learn trend-following better
+            np.array(hurst_H_values) * 2,              # 1 - Hurst emphasized
+            price_features['trend_strength'] * 1.5,    # 1 - Trend strength emphasized
+            secondary_features['tf2_trend_direction'] * 1.5,  # 1 - Multi-timeframe trend
+            volatility_regime_features['trending_score'] * 1.5,  # 1 - ADX-based
+            # Trend momentum (new feature: trend acceleration)
+            np.gradient(price_features['trend_strength']),  # 1 - Is trend strengthening?
+            # Hurst * trend_strength interaction (strong when both align)
+            (np.array(hurst_H_values) - 0.5) * price_features['trend_strength']  # 1
         ])
 
         # Only log during training
         if fit_scaler:
-            # New feature count: Removed 9 features, Added 22 features = Net +13
-            # Original: 86, Removed: 9 (5 deviation + 2 time + 2 candlestick), Added: 22 (2 RSI + 3 MACD + 4 new indicators + 2 order flow + 3 interactions + 8 lagged)
-            # Total: 86 - 9 + 22 = 99 features
+            # New feature count: Was 99, Added 6 trend boost features = 105 total
+            # Original: 99, Added: 6 trend boost features
+            # Total: 99 + 6 = 105 features
             print(f"Total features: {features.shape[1]}")
-            print(f"Breakdown: OHLC:4 + Hurst:2 + ATR:1 + Momentum:2 + Patterns:15 + Deviation:8 (reduced from 13) + OrderFlow:1 + Time:3 (reduced from 5) + Microstructure:5 + VolRegime:4 + MultiTF:9 + Candlestick:7 (reduced from 9) + SR:4 + VolumeProfile:5 + RealtimeOrderFlow:8 (added 2) + PriceChangeMag:1 + RSI:2 + MACD:3 + NewIndicators:4 + Interactions:3 + Lagged:8 = 99")
+            print(f"Breakdown: OHLC:4 + Hurst:2 + ATR:1 + Momentum:2 + Patterns:15 + Deviation:8 + OrderFlow:1 + Time:3 + Microstructure:5 + VolRegime:4 + MultiTF:9 + Candlestick:7 + SR:4 + VolumeProfile:5 + RealtimeOrderFlow:8 + PriceChangeMag:1 + RSI:2 + MACD:3 + NewIndicators:4 + Interactions:3 + Lagged:8 + TrendBoost:6 = 105")
 
         # Scale the features
         if fit_scaler:
@@ -2539,10 +2596,30 @@ class TradingModel:
                 print(f"Price change range: [{np.min(all_price_changes):.4f}%, {np.max(all_price_changes):.4f}%]")
 
             # Second pass: Create sequences and labels using the threshold
+            # PRIORITY 1: TREND-AWARE LABEL GENERATION
+            trend_adjusted_long = 0
+            trend_adjusted_short = 0
+            trend_adjusted_hold = 0
+
             for i in range(len(features_scaled) - self.sequence_length - lookahead_bars + 1):
                 X.append(features_scaled[i:i + self.sequence_length])
 
                 current_close = ohlc[i + self.sequence_length - 1, 3]
+
+                # PRIORITY 1: Get current trend context
+                current_hurst = hurst_H_values[i + self.sequence_length - 1]
+                # Get trend_strength from price_features (it's feature index around 688-696)
+                # Since we don't have easy access to price_features here, calculate it
+                idx = i + self.sequence_length - 1
+                if idx >= 5:
+                    # Simple trend strength: count higher highs vs lower lows in last 5 bars
+                    recent_highs = ohlc[idx-4:idx+1, 1]
+                    recent_lows = ohlc[idx-4:idx+1, 2]
+                    hh_count = sum([1 for j in range(1, len(recent_highs)) if recent_highs[j] > recent_highs[j-1]])
+                    ll_count = sum([1 for j in range(1, len(recent_lows)) if recent_lows[j] < recent_lows[j-1]])
+                    current_trend = hh_count - ll_count  # -4 to +4
+                else:
+                    current_trend = 0
 
                 # Use maximum move in next 3 bars
                 future_slice = ohlc[i + self.sequence_length:i + self.sequence_length + lookahead_bars]
@@ -2552,13 +2629,43 @@ class TradingModel:
                 max_up_move = (np.max(future_highs) - current_close) / current_close * 100
                 max_down_move = (current_close - np.min(future_lows)) / current_close * 100
 
-                # Create label based on dominant move and threshold
-                if max_up_move > percentile_threshold and max_up_move > max_down_move:
+                # PRIORITY 1: Adjust threshold based on trend strength
+                # In strong trends (H > 0.55 or trend_strength > 2), lower threshold for WITH-trend signals
+                # In weak trends, keep threshold higher
+                is_trending_up = (current_hurst > 0.55 and current_trend > 2)
+                is_trending_down = (current_hurst > 0.55 and current_trend < -2)
+
+                threshold = percentile_threshold
+                if is_trending_up:
+                    # Lower threshold for LONG signals in uptrends (easier to trigger)
+                    up_threshold = threshold * 0.7
+                    down_threshold = threshold * 1.3  # Higher threshold for SHORT (counter-trend)
+                elif is_trending_down:
+                    # Lower threshold for SHORT signals in downtrends
+                    down_threshold = threshold * 0.7
+                    up_threshold = threshold * 1.3  # Higher threshold for LONG (counter-trend)
+                else:
+                    up_threshold = down_threshold = threshold
+
+                # Create label with trend-adjusted thresholds
+                if max_up_move > up_threshold and max_up_move > max_down_move:
                     y.append(2)  # Long
-                elif max_down_move > percentile_threshold and max_down_move > max_up_move:
+                    if is_trending_up:
+                        trend_adjusted_long += 1
+                elif max_down_move > down_threshold and max_down_move > max_up_move:
                     y.append(0)  # Short
+                    if is_trending_down:
+                        trend_adjusted_short += 1
                 else:
                     y.append(1)  # Hold
+                    if is_trending_up or is_trending_down:
+                        trend_adjusted_hold += 1
+
+            if fit_scaler:
+                print(f"\nTREND-AWARE LABEL ADJUSTMENTS:")
+                print(f"  Labels adjusted in uptrends (easier LONG): {trend_adjusted_long}")
+                print(f"  Labels adjusted in downtrends (easier SHORT): {trend_adjusted_short}")
+                print(f"  Labels kept as HOLD in trends: {trend_adjusted_hold}")
 
         X = np.array(X)
         y = np.array(y)
@@ -2570,6 +2677,71 @@ class TradingModel:
             print(f"  SHORT (0): {counts[0]:4d} ({counts[0]/len(y)*100:5.1f}%)")
             print(f"  HOLD  (1): {counts[1]:4d} ({counts[1]/len(y)*100:5.1f}%)")
             print(f"  LONG  (2): {counts[2]:4d} ({counts[2]/len(y)*100:5.1f}%)")
+            print(f"{'='*50}\n")
+
+            # PRIORITY 6: Diagnostic - Analyze labels by trend context
+            print(f"{'='*50}")
+            print("PRIORITY 6: LABEL DISTRIBUTION BY TREND CONTEXT")
+            print(f"{'='*50}")
+
+            # Categorize each label by its trend context
+            uptrend_labels = []
+            downtrend_labels = []
+            ranging_labels = []
+
+            for i in range(len(y)):
+                idx = i + self.sequence_length - 1
+                if idx < len(hurst_H_values):
+                    current_hurst = hurst_H_values[idx]
+
+                    # Calculate trend strength
+                    if idx >= 5:
+                        recent_highs = ohlc[idx-4:idx+1, 1]
+                        recent_lows = ohlc[idx-4:idx+1, 2]
+                        hh_count = sum([1 for j in range(1, len(recent_highs)) if recent_highs[j] > recent_highs[j-1]])
+                        ll_count = sum([1 for j in range(1, len(recent_lows)) if recent_lows[j] < recent_lows[j-1]])
+                        current_trend = hh_count - ll_count
+                    else:
+                        current_trend = 0
+
+                    # Categorize by trend
+                    if current_hurst > 0.55 and current_trend > 2:
+                        uptrend_labels.append(y[i])
+                    elif current_hurst > 0.55 and current_trend < -2:
+                        downtrend_labels.append(y[i])
+                    else:
+                        ranging_labels.append(y[i])
+
+            # Print distributions
+            if len(uptrend_labels) > 0:
+                uptrend_counts = np.bincount(uptrend_labels, minlength=3)
+                print(f"\nUPTREND LABELS ({len(uptrend_labels)} samples):")
+                print(f"  SHORT: {uptrend_counts[0]:4d} ({uptrend_counts[0]/len(uptrend_labels)*100:5.1f}%)")
+                print(f"  HOLD:  {uptrend_counts[1]:4d} ({uptrend_counts[1]/len(uptrend_labels)*100:5.1f}%)")
+                print(f"  LONG:  {uptrend_counts[2]:4d} ({uptrend_counts[2]/len(uptrend_labels)*100:5.1f}%)")
+                if uptrend_counts[2] > uptrend_counts[0]:
+                    print(f"  ✓ MORE LONG than SHORT (good for uptrend)")
+                else:
+                    print(f"  ⚠️  MORE SHORT than LONG (BAD for uptrend)")
+
+            if len(downtrend_labels) > 0:
+                downtrend_counts = np.bincount(downtrend_labels, minlength=3)
+                print(f"\nDOWNTREND LABELS ({len(downtrend_labels)} samples):")
+                print(f"  SHORT: {downtrend_counts[0]:4d} ({downtrend_counts[0]/len(downtrend_labels)*100:5.1f}%)")
+                print(f"  HOLD:  {downtrend_counts[1]:4d} ({downtrend_counts[1]/len(downtrend_labels)*100:5.1f}%)")
+                print(f"  LONG:  {downtrend_counts[2]:4d} ({downtrend_counts[2]/len(downtrend_labels)*100:5.1f}%)")
+                if downtrend_counts[0] > downtrend_counts[2]:
+                    print(f"  ✓ MORE SHORT than LONG (good for downtrend)")
+                else:
+                    print(f"  ⚠️  MORE LONG than SHORT (BAD for downtrend)")
+
+            if len(ranging_labels) > 0:
+                ranging_counts = np.bincount(ranging_labels, minlength=3)
+                print(f"\nRANGING/WEAK TREND LABELS ({len(ranging_labels)} samples):")
+                print(f"  SHORT: {ranging_counts[0]:4d} ({ranging_counts[0]/len(ranging_labels)*100:5.1f}%)")
+                print(f"  HOLD:  {ranging_counts[1]:4d} ({ranging_counts[1]/len(ranging_labels)*100:5.1f}%)")
+                print(f"  LONG:  {ranging_counts[2]:4d} ({ranging_counts[2]/len(ranging_labels)*100:5.1f}%)")
+
             print(f"{'='*50}\n")
 
         return X, y
@@ -2672,20 +2844,18 @@ class TradingModel:
         print(f"Class weights (ENS): Short={class_weights[0]:.4f}, Hold={class_weights[1]:.4f}, Long={class_weights[2]:.4f}")
         print(f"Weight ratios - Short/Hold: {class_weights[0]/class_weights[1]:.2f}x, Short/Long: {class_weights[0]/class_weights[2]:.2f}x")
 
-        # ROUND 2 IMPROVEMENT: Use CombinedTradingLoss for better confidence and accuracy
-        # Combines label smoothing, confidence penalty, and directional accuracy
-        # Falls back to FocalLoss if advanced modules not available
-        if ADVANCED_MODULES_AVAILABLE:
-            criterion = CombinedTradingLoss(
-                smoothing=0.1,           # Prevents overconfidence
-                confidence_weight=0.15,  # Rewards high confidence when correct
-                directional_weight=1.5,  # Penalizes wrong direction more
-                use_sharpe=False         # Set to True if you pass returns
-            )
-            print("✓ Using CombinedTradingLoss (label smoothing + confidence penalty + directional)")
-        else:
-            criterion = FocalLoss(gamma=2.0, weight=class_weights)
-            print("⚠️  Using FocalLoss (advanced modules not available)")
+        # PRIORITY 2: Use TrendAwareTradingLoss for trend-following optimization
+        # This penalizes counter-trend trades and rewards with-trend trades
+        criterion = TrendAwareTradingLoss(
+            base_weight=1.0,
+            trend_penalty_weight=0.5  # 50% penalty for counter-trend
+        )
+        print("✓ Using TrendAwareTradingLoss (PRIORITY 2: trend-aware optimization)")
+
+        # Store trend features from X_train for use in loss calculation
+        # We need hurst (feature index 4) and trend_strength (feature index varies, we'll extract it)
+        # Since features are scaled, we need to extract from the unscaled data
+        # For now, we'll calculate trend features on-the-fly in the training loop
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
         # PERFORMANCE OPTIMIZATION: Better scheduler for faster convergence
@@ -2725,10 +2895,21 @@ class TradingModel:
                 batch_X = torch.FloatTensor(batch_X_aug).to(self.device)
                 batch_y = batch_y.to(self.device)
 
+                # PRIORITY 2: Extract trend features for TrendAwareTradingLoss
+                # Feature indices: hurst_H is at index 4 (after OHLC), hurst_emphasized is at index 99
+                # trend_strength_emphasized is at index 100
+                # We use the last position in each sequence as the current trend
+                batch_trend_features = torch.stack([
+                    batch_X[:, -1, 99],  # hurst_H_emphasized (already multiplied by 2, so divide)
+                    batch_X[:, -1, 100]  # trend_strength_emphasized
+                ], dim=1)
+                # Adjust hurst back to original scale (was multiplied by 2)
+                batch_trend_features[:, 0] = batch_trend_features[:, 0] / 2.0
+
                 # PERFORMANCE OPTIMIZATION: Mixed precision forward pass
                 with autocast(enabled=use_amp):
                     outputs = self.model(batch_X, return_attention=False)
-                    loss = criterion(outputs, batch_y)
+                    loss = criterion(outputs, batch_y, trend_features=batch_trend_features)
                     loss = loss / accumulation_steps  # Scale loss for accumulation
 
                 # PERFORMANCE OPTIMIZATION: Mixed precision backward pass
@@ -3332,10 +3513,11 @@ class TradingModel:
             raw_confidence = confidence
             print(f"🔍 Raw confidence (before boost): {raw_confidence:.3f}")
 
-            # IMPROVED: Multi-level confidence boost based on directional conviction
+            # IMPROVED: Multi-level confidence boost based on directional conviction AND trend alignment
             # Rewards clear directional signals with higher confidence
             # FIXED: Reduced boost multipliers to prevent 100% confidence
             if predicted_class in [0, 2]:  # Only boost directional signals (LONG/SHORT)
+                # Base boost from directional edge
                 if directional_edge > 0.20:  # Very strong conviction (20%+ edge)
                     confidence = min(0.95, confidence * 1.15)  # 15% boost, cap at 95%
                 elif directional_edge > 0.15:  # Strong conviction (15-20% edge)
@@ -3343,6 +3525,27 @@ class TradingModel:
                 elif directional_edge > 0.10:  # Moderate conviction (10-15% edge)
                     confidence = min(0.85, confidence * 1.05)  # 5% boost, cap at 85%
                 # Weak edge (<10%): no boost
+
+                # NEW: Additional boost for trend-aligned trades (PRIORITY 4)
+                if len(recent_bars_df) >= 100:
+                    current_hurst = calculate_hurst_exponent(recent_bars_df['close'].tail(100).values)[0]
+
+                    # Calculate short-term trend (last 20 bars)
+                    recent_closes = recent_bars_df['close'].tail(20).values
+                    trend_slope = (recent_closes[-1] - recent_closes[0]) / recent_closes[0]
+
+                    # Check if signal aligns with trend
+                    is_uptrend = (current_hurst > 0.55 and trend_slope > 0.001)
+                    is_downtrend = (current_hurst > 0.55 and trend_slope < -0.001)
+
+                    # Boost with-trend signals
+                    if (is_uptrend and predicted_class == 2) or (is_downtrend and predicted_class == 0):
+                        confidence = min(0.98, confidence * 1.10)  # 10% additional boost
+                        print(f"📈 TREND BOOST: Signal aligns with {('UP' if is_uptrend else 'DOWN')}TREND (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
+                    # Reduce counter-trend confidence
+                    elif (is_uptrend and predicted_class == 0) or (is_downtrend and predicted_class == 2):
+                        confidence = confidence * 0.85  # 15% penalty
+                        print(f"⚠️  COUNTER-TREND: Signal against trend, confidence reduced (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
 
             if raw_confidence > 0:
                 boost_pct = (confidence/raw_confidence - 1)*100
