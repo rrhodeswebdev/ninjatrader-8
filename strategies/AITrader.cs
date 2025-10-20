@@ -235,43 +235,66 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 currentDay = today;
                 dailyPnL = 0.0;
-                Print("New trading day - Daily P&L reset");
+                Print("=== NEW TRADING DAY - Daily P&L reset ===");
             }
 
-            // Add realized P&L from the account
+            // Calculate realized P&L from closed trades today
+            double realizedPnL = 0.0;
             if (SystemPerformance != null && SystemPerformance.AllTrades.Count > 0)
             {
-                // Calculate today's P&L from all trades
-                dailyPnL = 0.0;
                 foreach (var trade in SystemPerformance.AllTrades)
                 {
                     if (trade.Exit.Time.Date == today)
                     {
-                        dailyPnL += trade.ProfitCurrency;
+                        realizedPnL += trade.ProfitCurrency;
                     }
                 }
             }
 
-            Print($"Daily P&L Updated: {dailyPnL:C2} (Goal: {dailyProfitGoal:C2}, Max Loss: -{dailyMaxLoss:C2})");
+            // Add unrealized P&L from current open position
+            double unrealizedPnL = Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency, Close[0]);
+
+            // Total daily P&L = realized + unrealized
+            dailyPnL = realizedPnL + unrealizedPnL;
+
+            Print($"[P&L] Daily: {dailyPnL:C2} | Realized: {realizedPnL:C2} | Unrealized: {unrealizedPnL:C2} | Goal: {dailyProfitGoal:C2} | Max Loss: -{dailyMaxLoss:C2}");
 
             // Check if we hit profit goal or max loss
             if (dailyPnL >= dailyProfitGoal)
             {
-                Print($"*** DAILY PROFIT GOAL REACHED: {dailyPnL:C2} ***");
+                Print($"*** DAILY PROFIT GOAL REACHED: {dailyPnL:C2} >= {dailyProfitGoal:C2} ***");
                 tradingEnabled = false;
                 UpdateButtonStates();
+
+                // Exit any open positions to lock in profit
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    Print("Exiting LONG position to lock in profit");
+                    ExitLong();
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    Print("Exiting SHORT position to lock in profit");
+                    ExitShort();
+                }
             }
             else if (dailyPnL <= -dailyMaxLoss)
             {
-                Print($"*** DAILY MAX LOSS REACHED: {dailyPnL:C2} ***");
+                Print($"*** DAILY MAX LOSS REACHED: {dailyPnL:C2} <= -{dailyMaxLoss:C2} ***");
                 tradingEnabled = false;
                 UpdateButtonStates();
 
                 // Exit any open positions
                 if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    Print("Exiting LONG position due to max loss");
                     ExitLong();
+                }
                 else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    Print("Exiting SHORT position due to max loss");
                     ExitShort();
+                }
             }
         }
 
@@ -301,6 +324,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Ensure we have enough bars before trading
             if (CurrentBar < BarsRequiredToTrade)
                 return;
+
+            // Update daily P&L on every bar to track profit/loss continuously
+            UpdateDailyPnL();
 
             // Send current bar data on each bar close (real-time only)
             if (State == State.Realtime)
@@ -399,6 +425,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 
         private void SendBarData(int barIndex)
         {
+            // Update daily P&L BEFORE sending data to server
+            UpdateDailyPnL();
+
+            // CHECK DAILY LIMITS - Don't send request if limits are hit
+            if (dailyPnL >= dailyProfitGoal && dailyProfitGoal > 0)
+            {
+                Print($"[LIMIT CHECK] Daily profit goal reached ({dailyPnL:C2}) - NOT sending bar data");
+                return;
+            }
+
+            if (dailyPnL <= -dailyMaxLoss && dailyMaxLoss > 0)
+            {
+                Print($"[LIMIT CHECK] Daily max loss reached ({dailyPnL:C2}) - NOT sending bar data");
+                return;
+            }
+
             // Capture primary timeframe bar data (BarsArray[0])
             string barTime = Times[0][0].ToString("yyyy-MM-ddTHH:mm:ss");
             double barOpen = Opens[0][0];
@@ -528,7 +570,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             // Only execute if trading is enabled
             if (!tradingEnabled)
+            {
+                Print("Trading is disabled - skipping signal");
                 return;
+            }
 
             // Execute on UI thread
             ChartControl.Dispatcher.InvokeAsync(() =>

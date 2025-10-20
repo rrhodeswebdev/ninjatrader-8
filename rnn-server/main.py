@@ -363,30 +363,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 "training_status": training_status["progress"]
             }
 
-        # CHECK DAILY MAX LOSS - Block new trades if daily loss limit hit
-        daily_pnl = request.get('dailyPnL', 0.0)
-        daily_max_loss = request.get('dailyMaxLoss', 0.0)
 
-        if daily_max_loss > 0 and daily_pnl <= -daily_max_loss:
-            print("\n" + "="*50)
-            print("🛑 DAILY MAX LOSS HIT - BLOCKING NEW TRADES")
-            print("="*50)
-            print(f"Daily P&L: ${daily_pnl:.2f}")
-            print(f"Max Loss Limit: ${daily_max_loss:.2f}")
-            print(f"Loss Exceeded By: ${abs(daily_pnl + daily_max_loss):.2f}")
-            print("Returning HOLD to prevent new entries")
-            print("="*50 + "\n")
-
-            return {
-                "status": "max_loss_hit",
-                "message": f"Daily max loss of ${daily_max_loss:.2f} has been exceeded. Current P&L: ${daily_pnl:.2f}",
-                "signal": "hold",
-                "confidence": 0.0,
-                "daily_pnl": sanitize_float(daily_pnl),
-                "daily_max_loss": sanitize_float(daily_max_loss),
-                "loss_exceeded": True,
-                "exceeded_by": sanitize_float(abs(daily_pnl + daily_max_loss))
-            }
 
         # Make prediction with risk management parameters
         try:
