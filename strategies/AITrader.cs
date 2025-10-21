@@ -522,10 +522,26 @@ namespace NinjaTrader.NinjaScript.Strategies
                                 Print("Risk Management - SL: " + stopLoss.ToString("F2") + ", TP: " + takeProfit.ToString("F2"));
                             }
 
+                            // Check for early exit flag
+                            bool earlyExitTriggered = false;
+                            string exitReason = "";
+                            if (result.exit_analysis != null && result.exit_analysis.early_exit_triggered != null)
+                            {
+                                earlyExitTriggered = (bool)result.exit_analysis.early_exit_triggered;
+                                if (earlyExitTriggered && result.exit_analysis.reason != null)
+                                {
+                                    exitReason = result.exit_analysis.reason.ToString();
+                                }
+                            }
+
                             Print("AI Signal: " + signal.ToUpper() + " (" + (confidence * 100).ToString("F2") + "%)");
+                            if (earlyExitTriggered)
+                            {
+                                Print("  ** EARLY EXIT DETECTED: " + exitReason);
+                            }
 
                             // Execute trades based on signal and trading settings
-                            ExecuteTradeSignal(signal, confidence, stopLoss, takeProfit);
+                            ExecuteTradeSignal(signal, confidence, stopLoss, takeProfit, earlyExitTriggered, exitReason);
                         }
                     }
                     else
@@ -540,7 +556,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             });
         }
 
-        private void ExecuteTradeSignal(string signal, double confidence, double stopLoss, double takeProfit)
+        private void ExecuteTradeSignal(string signal, double confidence, double stopLoss, double takeProfit, bool earlyExitTriggered = false, string exitReason = "")
         {
             // Only execute if trading is enabled
             if (!tradingEnabled)
@@ -576,8 +592,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                         else if (Position.MarketPosition == MarketPosition.Short)
                         {
-                            // Need to reverse from short to long
-                            Print($"LONG SIGNAL - Closing {Position.Quantity} SHORT contracts first");
+                            // OPPOSITE SIGNAL - Reverse from short to long
+                            Print($"LONG SIGNAL - Reversing from SHORT (Closing {Position.Quantity} contracts)");
                             desiredPosition = "long";  // Set desired position
                             desiredStopLoss = stopLoss;  // Store SL for delayed entry
                             desiredTakeProfit = takeProfit;  // Store TP for delayed entry
@@ -586,13 +602,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                         else if (Position.MarketPosition == MarketPosition.Long)
                         {
-                            // Already long - verify it's only 1 contract
+                            // Already long - stay in position (trend following)
+                            Print($"LONG SIGNAL - Already in LONG position ({Position.Quantity} contracts) - Holding");
+
+                            // Verify it's only 1 contract
                             if (Position.Quantity > 1)
                             {
                                 Print($"WARNING: LONG position has {Position.Quantity} contracts, reducing to 1");
                                 ExitLong(Position.Quantity - 1, "AILong", "AILong");
                             }
-                            // else already in correct position with 1 contract
                         }
                     }
                     else if (signal == "short" && allowShortTrades)
@@ -617,8 +635,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                         else if (Position.MarketPosition == MarketPosition.Long)
                         {
-                            // Need to reverse from long to short
-                            Print($"SHORT SIGNAL - Closing {Position.Quantity} LONG contracts first");
+                            // OPPOSITE SIGNAL - Reverse from long to short
+                            Print($"SHORT SIGNAL - Reversing from LONG (Closing {Position.Quantity} contracts)");
                             desiredPosition = "short";  // Set desired position
                             desiredStopLoss = stopLoss;  // Store SL for delayed entry
                             desiredTakeProfit = takeProfit;  // Store TP for delayed entry
@@ -627,31 +645,80 @@ namespace NinjaTrader.NinjaScript.Strategies
                         }
                         else if (Position.MarketPosition == MarketPosition.Short)
                         {
-                            // Already short - verify it's only 1 contract
+                            // Already short - stay in position (trend following)
+                            Print($"SHORT SIGNAL - Already in SHORT position ({Position.Quantity} contracts) - Holding");
+
+                            // Verify it's only 1 contract
                             if (Position.Quantity > 1)
                             {
                                 Print($"WARNING: SHORT position has {Position.Quantity} contracts, reducing to 1");
                                 ExitShort(Position.Quantity - 1, "AIShort", "AIShort");
                             }
-                            // else already in correct position with 1 contract
                         }
                     }
                     else if (signal == "hold")
                     {
-                        // Exit any open positions on HOLD signal
-                        desiredPosition = "flat";
-                        if (Position.MarketPosition == MarketPosition.Long)
+                        // ====================================================================
+                        // HOLD SIGNAL HANDLING - Two Scenarios:
+                        // ====================================================================
+                        // 1. EARLY EXIT (earlyExitTriggered = true)
+                        //    - Intelligent exit condition detected by server
+                        //    - Exit position immediately
+                        //
+                        // 2. REGULAR HOLD (earlyExitTriggered = false)
+                        //    - Model says "no strong signal"
+                        //    - Stay in position (trend following)
+                        //    - Wait for opposite signal, stop loss, or take profit
+                        // ====================================================================
+
+                        if (earlyExitTriggered)
                         {
-                            Print($"HOLD SIGNAL - Closing {Position.Quantity} LONG contracts");
-                            ExitLong();
+                            // EARLY EXIT - Exit position now
+                            desiredPosition = "flat";
+
+                            if (Position.MarketPosition == MarketPosition.Long)
+                            {
+                                Print($"🚨 EARLY EXIT - Closing LONG position ({Position.Quantity} contracts)");
+                                Print($"  Reason: {exitReason}");
+                                ExitLong();
+                            }
+                            else if (Position.MarketPosition == MarketPosition.Short)
+                            {
+                                Print($"🚨 EARLY EXIT - Closing SHORT position ({Position.Quantity} contracts)");
+                                Print($"  Reason: {exitReason}");
+                                ExitShort();
+                            }
+                            else
+                            {
+                                Print("🚨 EARLY EXIT signal received but no position open");
+                            }
                         }
-                        else if (Position.MarketPosition == MarketPosition.Short)
+                        else
                         {
-                            Print($"HOLD SIGNAL - Closing {Position.Quantity} SHORT contracts");
-                            ExitShort();
+                            // REGULAR HOLD - Stay in position (trend following)
+                            if (Position.MarketPosition == MarketPosition.Long)
+                            {
+                                Print($"HOLD SIGNAL - Staying in LONG position ({Position.Quantity} contracts)");
+                                Print("  Exit Strategy: Will exit on SHORT signal, stop loss, take profit, or early exit");
+                            }
+                            else if (Position.MarketPosition == MarketPosition.Short)
+                            {
+                                Print($"HOLD SIGNAL - Staying in SHORT position ({Position.Quantity} contracts)");
+                                Print("  Exit Strategy: Will exit on LONG signal, stop loss, take profit, or early exit");
+                            }
+                            else
+                            {
+                                Print("HOLD SIGNAL - No position, staying flat");
+                            }
+
+                            // Do nothing - let the position run
+                            // Exits will happen via:
+                            // 1. Stop Loss hit
+                            // 2. Take Profit hit
+                            // 3. Opposite signal (LONG->SHORT or SHORT->LONG)
+                            // 4. Early exit detection (next bar)
                         }
                     }
-                    // HOLD signal - no action needed, already logged above
                 }
                 catch (Exception ex)
                 {

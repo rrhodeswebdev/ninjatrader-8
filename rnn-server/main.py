@@ -385,7 +385,18 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 filtered_signal = "hold"
                 print(f"\n⚠️  Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()} → HOLD")
 
-            # Check for exit conditions if in a position
+            # ========================================================================
+            # EARLY EXIT DETECTION (Intelligent exits before waiting for opposite signal)
+            # ========================================================================
+            # This provides selective exits based on:
+            # 1. Strong opposite signal (confidence > 35%)
+            # 2. High HOLD probability (> 50% - model uncertainty)
+            # 3. Directional probability reversal
+            # 4. Momentum loss (3 consecutive counter-moves)
+            #
+            # NOTE: Regular HOLD signals do NOT trigger exits - only these conditions do
+            # ========================================================================
+
             exit_analysis = {'should_exit': False, 'reason': 'No position', 'urgency': 'none'}
             current_position = request.get('current_position', 'flat')
             entry_price = request.get('entry_price', 0.0)
@@ -397,12 +408,18 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                     entry_price
                 )
 
-                # If exit detected, override signal to HOLD (to trigger exit)
+                # If early exit detected, override signal to HOLD
+                # This tells NinjaTrader to exit the position NOW (not wait for opposite signal)
                 if exit_analysis['should_exit']:
+                    # Override the filtered signal to force an exit
+                    original_signal_before_exit = filtered_signal
                     filtered_signal = "hold"
+
                     print(f"\n🚨 EARLY EXIT DETECTED 🚨")
+                    print(f"Original Signal: {original_signal_before_exit.upper()}")
                     print(f"Reason: {exit_analysis['reason']}")
                     print(f"Urgency: {exit_analysis['urgency'].upper()}")
+                    print(f"Action: Overriding to HOLD to trigger exit")
 
             print("\n" + "="*50)
             print("PREDICTION WITH RISK PARAMETERS")
@@ -427,6 +444,23 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 print(f"  Dollar Risk: ${trade_params.get('risk_dollars', 0):.2f}")
                 print(f"  Risk %: {trade_params.get('risk_pct', 0)*100:.2f}%")
 
+                # Log counter-trend info
+                if trade_params.get('is_counter_trend', False):
+                    print(f"\n⚠️  COUNTER-TREND TRADE:")
+                    print(f"  Trend Direction: {trade_params.get('trend_direction', 'unknown').upper()}")
+                    print(f"  Trend Strength (ADX): {trade_params.get('trend_strength', 0):.1f}")
+                    print(f"  Target Adjustment: {trade_params.get('target_adjustment', 1.0):.0%}")
+
+                # Log filter details
+                filter_details = trade_params.get('filter_details', {})
+                if filter_details.get('filtered') or filter_details.get('boosted'):
+                    print(f"\n🔍 FILTER APPLIED:")
+                    print(f"  {filter_details.get('reason', 'N/A')}")
+                    if 'confidence_boost' in filter_details:
+                        print(f"  Confidence Boost: +{filter_details['confidence_boost']*100:.1f}%")
+                    if 'confidence_penalty' in filter_details:
+                        print(f"  Confidence Penalty: -{filter_details['confidence_penalty']*100:.1f}%")
+
             print("="*50 + "\n")
 
             return {
@@ -440,7 +474,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 "filtered": filtered_signal != signal,
                 "recommendation": f"{filtered_signal.upper()} with {sanitize_float(confidence)*100:.1f}% confidence" +
                                  (f" (filtered from {signal.upper()})" if filtered_signal != signal else ""),
-                # Risk management parameters
+                # Risk management parameters (ENHANCED with counter-trend info)
                 "risk_management": {
                     "contracts": trade_params['contracts'],
                     "entry_price": sanitize_float(trade_params['entry_price']),
@@ -451,13 +485,31 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                     "risk_reward_ratio": sanitize_float(trade_params.get('risk_reward', 0)),
                     "risk_dollars": sanitize_float(trade_params.get('risk_dollars', 0)),
                     "risk_pct": sanitize_float(trade_params.get('risk_pct', 0)),
-                    "regime": trade_params.get('regime', 'unknown')
+                    "regime": trade_params.get('regime', 'unknown'),
+                    # NEW: Counter-trend information
+                    "trend_direction": trade_params.get('trend_direction', 'neutral'),
+                    "trend_strength": sanitize_float(trade_params.get('trend_strength', 0)),
+                    "is_counter_trend": trade_params.get('is_counter_trend', False),
+                    "target_adjustment": sanitize_float(trade_params.get('target_adjustment', 1.0))
                 },
-                # Exit analysis (NEW!)
+                # Counter-trend filter details (NEW!)
+                "counter_trend_filter": {
+                    "applied": trade_params.get('filter_details', {}).get('filtered', False) or
+                              trade_params.get('filter_details', {}).get('boosted', False),
+                    "reason": trade_params.get('filter_details', {}).get('reason', 'No filtering'),
+                    "original_signal": trade_params.get('original_signal', signal),
+                    "original_confidence": sanitize_float(trade_params.get('original_confidence', confidence)),
+                    "confidence_adjustment": sanitize_float(
+                        trade_params.get('filter_details', {}).get('confidence_boost', 0) -
+                        trade_params.get('filter_details', {}).get('confidence_penalty', 0)
+                    )
+                },
+                # Exit analysis (NEW - supports intelligent early exits)
                 "exit_analysis": {
                     "should_exit": exit_analysis['should_exit'],
                     "reason": exit_analysis['reason'],
-                    "urgency": exit_analysis['urgency']
+                    "urgency": exit_analysis['urgency'],
+                    "early_exit_triggered": exit_analysis['should_exit']  # Flag for NinjaTrader
                 }
             }
 

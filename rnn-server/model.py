@@ -122,10 +122,31 @@ def calculate_adx(high, low, close, period=14):
 def detect_market_regime(df, lookback=100):
     """
     Detect current market regime for adaptive strategy
-    Returns: 'trending', 'ranging', 'high_vol', or 'low_vol'
+    Returns: regime string for backward compatibility
+    Use detect_market_regime_enhanced() for full details
+    """
+    result = detect_market_regime_enhanced(df, lookback)
+    return result['regime']
+
+
+def detect_market_regime_enhanced(df, lookback=100):
+    """
+    Enhanced regime detection that includes trend direction and strength
+
+    Returns:
+        dict with:
+            - regime: str (trending_normal, ranging_normal, etc.)
+            - trend_direction: str (bullish, bearish, neutral)
+            - trend_strength: float (ADX value)
+            - vol_ratio: float (current volatility / historical volatility)
     """
     if len(df) < lookback:
-        return 'unknown'
+        return {
+            'regime': 'unknown',
+            'trend_direction': 'neutral',
+            'trend_strength': 0.0,
+            'vol_ratio': 1.0
+        }
 
     recent_data = df.tail(lookback)
 
@@ -136,6 +157,19 @@ def detect_market_regime(df, lookback=100):
                        period=14)
     current_adx = adx[-1] if len(adx) > 0 else 0
 
+    # NEW: Calculate trend direction using multiple timeframes
+    ema_20 = recent_data['close'].ewm(span=20).mean().iloc[-1]
+    ema_50 = recent_data['close'].ewm(span=50).mean().iloc[-1]
+    current_price = recent_data['close'].iloc[-1]
+
+    # Determine trend direction
+    if ema_20 > ema_50 and current_price > ema_20:
+        trend_direction = 'bullish'
+    elif ema_20 < ema_50 and current_price < ema_20:
+        trend_direction = 'bearish'
+    else:
+        trend_direction = 'neutral'
+
     # Calculate volatility regime
     returns = recent_data['close'].pct_change().dropna()
     current_vol = returns.tail(20).std()
@@ -145,19 +179,54 @@ def detect_market_regime(df, lookback=100):
     # Classify regime
     if current_adx > 25:
         if vol_ratio > 1.5:
-            return 'trending_high_vol'
+            regime = 'trending_high_vol'
         else:
-            return 'trending_normal'
+            regime = 'trending_normal'
     elif current_adx < 20:
         if vol_ratio < 0.7:
-            return 'ranging_low_vol'
+            regime = 'ranging_low_vol'
         else:
-            return 'ranging_normal'
+            regime = 'ranging_normal'
     else:
         if vol_ratio > 1.5:
-            return 'high_vol_chaos'
+            regime = 'high_vol_chaos'
         else:
-            return 'transitional'
+            regime = 'transitional'
+
+    return {
+        'regime': regime,
+        'trend_direction': trend_direction,
+        'trend_strength': current_adx,
+        'vol_ratio': vol_ratio
+    }
+
+
+def calculate_trend_alignment_feature(df, lookback=50):
+    """
+    Calculate how aligned the current price action is with the trend
+    Used as a feature to help the model understand counter-trend scenarios
+
+    Returns:
+        pandas Series with values from -1 (strong counter-trend) to +1 (strong with-trend)
+    """
+    if len(df) < lookback:
+        return pd.Series(0.0, index=df.index)
+
+    # Calculate EMAs
+    ema_20 = df['close'].ewm(span=20).mean()
+    ema_50 = df['close'].ewm(span=50).mean()
+
+    # Trend strength: normalized difference between EMAs
+    trend_strength = (ema_20 - ema_50) / (df['close'] + 1e-8)
+
+    # Price position relative to EMA20
+    price_position = (df['close'] - ema_20) / (df['close'] + 1e-8)
+
+    # Combine into alignment score
+    # Positive when price and trend aligned, negative when counter-trend
+    alignment = trend_strength * np.sign(price_position) * 100  # Scale to reasonable range
+
+    return alignment
 
 
 def calculate_hurst_exponent(prices, min_window=10):
@@ -3806,11 +3875,16 @@ class TradingModel:
         print(f"   ATR: {atr:.2f} points")
         print(f"   Entry price: ${entry_price:.2f}")
 
-        # Get regime
-        regime = detect_market_regime(recent_bars_df, lookback=min(100, len(recent_bars_df)-1))
-        print(f"   Regime: {regime}")
+        # Get enhanced regime info (includes trend direction and strength)
+        regime_info = detect_market_regime_enhanced(recent_bars_df, lookback=min(100, len(recent_bars_df)-1))
+        regime = regime_info['regime']
+        trend_direction = regime_info['trend_direction']
+        trend_strength = regime_info['trend_strength']
 
-        # Calculate trade parameters using risk manager
+        print(f"   Regime: {regime}")
+        print(f"   Trend: {trend_direction.upper()} (ADX={trend_strength:.1f})")
+
+        # Calculate trade parameters using risk manager with enhanced regime info
         risk_mgr = RiskManager()
         trade_params = risk_mgr.calculate_trade_parameters(
             signal=signal,
@@ -3819,7 +3893,8 @@ class TradingModel:
             atr=atr,
             regime=regime,
             account_balance=account_balance,
-            tick_value=tick_value
+            tick_value=tick_value,
+            regime_info=regime_info  # Pass enhanced regime info
         )
 
         return trade_params

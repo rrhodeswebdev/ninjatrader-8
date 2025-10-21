@@ -222,10 +222,12 @@ class StopTargetCalculator:
         direction: str,
         atr: float,
         regime: str = 'unknown',
-        confidence: float = 0.65
+        confidence: float = 0.65,
+        trend_direction: str = 'neutral',
+        trend_strength: float = 0.0
     ) -> Dict[str, float]:
         """
-        Calculate stop loss and take profit levels
+        Calculate stop loss and take profit levels with trend-awareness
 
         Args:
             entry_price: Entry price
@@ -233,6 +235,8 @@ class StopTargetCalculator:
             atr: Average True Range (in points)
             regime: Market regime
             confidence: Model confidence (affects stop tightness)
+            trend_direction: Direction of prevailing trend ('bullish', 'bearish', 'neutral')
+            trend_strength: ADX value indicating trend strength
 
         Returns:
             Dictionary with:
@@ -241,10 +245,31 @@ class StopTargetCalculator:
                 - stop_distance: Distance in points
                 - target_distance: Distance in points
                 - risk_reward: Ratio of target/stop
+                - is_counter_trend: Whether this is a counter-trend trade
         """
 
         # Get regime parameters
         params = self.regime_params.get(regime, self.regime_params['unknown'])
+
+        # Check if this is a counter-trend trade
+        is_counter_trend = False
+        if direction == 'long' and trend_direction == 'bearish':
+            is_counter_trend = True
+        elif direction == 'short' and trend_direction == 'bullish':
+            is_counter_trend = True
+
+        # Adjust risk/reward for counter-trend trades in strong trends
+        target_multiplier = 1.0
+        stop_multiplier = 1.0
+
+        if is_counter_trend and trend_strength > 20:
+            # TIGHTER TARGETS for counter-trend in strong trends
+            # The stronger the trend, the tighter the target
+            strength_factor = min(1.0, (trend_strength - 20) / 20)  # 0 to 1 as ADX goes 20->40
+            target_multiplier = 1.0 - (0.4 * strength_factor)  # Reduce up to 40%
+
+            print(f"⚠️  Counter-trend {direction} trade in {trend_direction} trend (ADX={trend_strength:.1f})")
+            print(f"   Target reduced by {(1-target_multiplier)*100:.0f}% (multiplier={target_multiplier:.2f})")
 
         # Confidence-based adjustment (tighter stops for low confidence)
         # High confidence -> wider stops (let trade breathe)
@@ -253,10 +278,11 @@ class StopTargetCalculator:
         confidence_factor = np.clip(confidence_factor, 0.5, 1.2)
 
         # Calculate stop distance
-        stop_distance = atr * params['stop_atr'] * confidence_factor
+        stop_distance = atr * params['stop_atr'] * confidence_factor * stop_multiplier
 
-        # Calculate target distance (maintain risk/reward ratio)
-        target_distance = stop_distance * params['risk_reward']
+        # Calculate target distance with trend adjustment
+        base_target = stop_distance * params['risk_reward']
+        target_distance = base_target * target_multiplier
 
         # Round to nearest quarter point (ES tick size)
         stop_distance = round(stop_distance * 4) / 4
@@ -283,6 +309,10 @@ class StopTargetCalculator:
             'target_distance': target_distance,
             'risk_reward': target_distance / stop_distance if stop_distance > 0 else 0,
             'confidence_factor': confidence_factor,
+            'is_counter_trend': is_counter_trend,
+            'target_adjustment': target_multiplier,
+            'trend_direction': trend_direction,
+            'trend_strength': trend_strength,
             'regime': regime
         }
 
@@ -339,6 +369,132 @@ class StopTargetCalculator:
         return initial_stop
 
 
+class CounterTrendFilter:
+    """
+    Filter or adjust counter-trend trades based on market regime
+
+    This class helps prevent taking counter-trend trades in strong trending markets
+    and favors counter-trend trades in ranging markets where they perform best.
+    """
+
+    def __init__(
+        self,
+        enable_filtering: bool = True,
+        trending_adx_threshold: float = 25.0,
+        counter_trend_confidence_penalty: float = 0.5,  # Reduce confidence by 50% in trends
+        ranging_confidence_boost: float = 0.15,  # Boost confidence by 15% in ranging
+        block_counter_trends_in_strong_trends: bool = True  # Block entirely vs just penalize
+    ):
+        self.enable_filtering = enable_filtering
+        self.trending_adx_threshold = trending_adx_threshold
+        self.counter_trend_confidence_penalty = counter_trend_confidence_penalty
+        self.ranging_confidence_boost = ranging_confidence_boost
+        self.block_counter_trends = block_counter_trends_in_strong_trends
+
+    def is_counter_trend(self, signal: str, trend_direction: str) -> bool:
+        """Check if signal is counter to the prevailing trend"""
+        if trend_direction == 'neutral':
+            return False
+
+        if signal == 'long' and trend_direction == 'bearish':
+            return True
+        if signal == 'short' and trend_direction == 'bullish':
+            return True
+
+        return False
+
+    def filter_signal(
+        self,
+        signal: str,
+        confidence: float,
+        regime_info: dict
+    ) -> tuple:
+        """
+        Filter or adjust counter-trend signals based on regime
+
+        Args:
+            signal: Trading signal ('long', 'short', 'hold')
+            confidence: Model confidence (0-1)
+            regime_info: Dict with 'regime', 'trend_direction', 'trend_strength'
+
+        Returns:
+            (adjusted_signal, adjusted_confidence, filter_details)
+        """
+        if not self.enable_filtering or signal == 'hold':
+            return signal, confidence, {'filtered': False, 'reason': 'No filtering needed'}
+
+        regime = regime_info.get('regime', 'unknown')
+        trend_direction = regime_info.get('trend_direction', 'neutral')
+        trend_strength = regime_info.get('trend_strength', 0.0)
+
+        is_counter = self.is_counter_trend(signal, trend_direction)
+
+        # CASE 1: Strong Trending Market + Counter-Trend Signal
+        if is_counter and trend_strength > self.trending_adx_threshold:
+            if regime in ['trending_normal', 'trending_high_vol']:
+                if self.block_counter_trends:
+                    # Block counter-trend trades entirely in strong trends
+                    return 'hold', 0.0, {
+                        'filtered': True,
+                        'reason': f'Counter-trend {signal} BLOCKED in {regime} (ADX={trend_strength:.1f})',
+                        'original_signal': signal,
+                        'original_confidence': confidence,
+                        'trend_direction': trend_direction
+                    }
+                else:
+                    # Reduce confidence significantly but allow the trade
+                    adjusted_confidence = confidence * (1 - self.counter_trend_confidence_penalty)
+                    return signal, adjusted_confidence, {
+                        'filtered': True,
+                        'reason': f'Counter-trend confidence reduced in {regime}',
+                        'confidence_penalty': self.counter_trend_confidence_penalty,
+                        'trend_direction': trend_direction
+                    }
+
+        # CASE 2: Ranging Market + Counter-Trend Signal = GOOD
+        if is_counter and trend_strength < 20:
+            if regime in ['ranging_normal', 'ranging_low_vol']:
+                # Boost confidence for counter-trend trades in ranging markets
+                confidence_boost = min(self.ranging_confidence_boost, (20 - trend_strength) / 100)
+                adjusted_confidence = min(1.0, confidence + confidence_boost)
+
+                return signal, adjusted_confidence, {
+                    'filtered': False,
+                    'boosted': True,
+                    'reason': f'Counter-trend {signal} FAVORED in {regime}',
+                    'confidence_boost': confidence_boost,
+                    'trend_direction': trend_direction
+                }
+
+        # CASE 3: Transitional markets - reduce all confidence slightly
+        if regime == 'transitional':
+            adjusted_confidence = confidence * 0.85
+            return signal, adjusted_confidence, {
+                'filtered': True,
+                'reason': 'Confidence reduced in transitional regime',
+                'confidence_penalty': 0.15,
+                'trend_direction': trend_direction
+            }
+
+        # CASE 4: High volatility chaos - reduce confidence
+        if regime == 'high_vol_chaos':
+            adjusted_confidence = confidence * 0.7
+            return signal, adjusted_confidence, {
+                'filtered': True,
+                'reason': 'Confidence reduced in high volatility chaos',
+                'confidence_penalty': 0.3,
+                'trend_direction': trend_direction
+            }
+
+        # Default: no change
+        return signal, confidence, {
+            'filtered': False,
+            'reason': 'Signal passed filtering',
+            'is_counter_trend': is_counter,
+            'trend_direction': trend_direction
+        }
+
+
 class RiskManager:
     """
     Combined risk management: position sizing + stop/target calculation
@@ -347,10 +503,12 @@ class RiskManager:
     def __init__(
         self,
         position_sizer: Optional[PositionSizer] = None,
-        stop_calculator: Optional[StopTargetCalculator] = None
+        stop_calculator: Optional[StopTargetCalculator] = None,
+        counter_trend_filter: Optional[CounterTrendFilter] = None
     ):
         self.position_sizer = position_sizer or PositionSizer()
         self.stop_calculator = stop_calculator or StopTargetCalculator()
+        self.counter_trend_filter = counter_trend_filter or CounterTrendFilter()
 
     def calculate_trade_parameters(
         self,
@@ -360,23 +518,39 @@ class RiskManager:
         atr: float,
         regime: str,
         account_balance: float,
-        tick_value: float = 12.50
+        tick_value: float = 12.50,
+        regime_info: Optional[dict] = None
     ) -> Dict:
         """
         Calculate complete trade parameters: position size, stops, targets
+        Now includes counter-trend filtering and trend-aware stop/target adjustment
 
         Args:
             signal: 'long', 'short', or 'hold'
             confidence: Model confidence (0-1)
             entry_price: Proposed entry price
             atr: Average True Range
-            regime: Market regime
+            regime: Market regime (string for backward compatibility)
             account_balance: Account balance
             tick_value: Value per tick
+            regime_info: Enhanced regime info dict with trend_direction, trend_strength (optional)
 
         Returns:
             Complete trade specification with all parameters
         """
+
+        # Extract trend info from regime_info or use defaults
+        if regime_info:
+            trend_direction = regime_info.get('trend_direction', 'neutral')
+            trend_strength = regime_info.get('trend_strength', 0.0)
+        else:
+            trend_direction = 'neutral'
+            trend_strength = 0.0
+            regime_info = {
+                'regime': regime,
+                'trend_direction': trend_direction,
+                'trend_strength': trend_strength
+            }
 
         if signal == 'hold':
             return {
@@ -385,17 +559,42 @@ class RiskManager:
                 'entry_price': 0,
                 'stop_loss': 0,
                 'take_profit': 0,
-                'reason': 'Hold signal'
+                'reason': 'Hold signal',
+                'regime': regime,
+                'trend_direction': trend_direction
             }
 
-        # Calculate stops first (needed for position sizing)
+        # Apply counter-trend filter
+        filtered_signal, filtered_confidence, filter_details = self.counter_trend_filter.filter_signal(
+            signal, confidence, regime_info
+        )
+
+        # If signal was blocked, return hold
+        if filtered_signal == 'hold':
+            return {
+                'signal': 'hold',
+                'contracts': 0,
+                'entry_price': 0,
+                'stop_loss': 0,
+                'take_profit': 0,
+                'reason': filter_details.get('reason', 'Filtered by counter-trend filter'),
+                'regime': regime,
+                'trend_direction': trend_direction,
+                'filter_details': filter_details,
+                'original_signal': signal,
+                'original_confidence': confidence
+            }
+
+        # Calculate stops with trend-awareness
         stops = self.stop_calculator.calculate_stops(
-            entry_price, signal, atr, regime, confidence
+            entry_price, filtered_signal, atr, regime, filtered_confidence,
+            trend_direction=trend_direction,
+            trend_strength=trend_strength
         )
 
         # Calculate position size
         position = self.position_sizer.calculate_position_size(
-            confidence,
+            filtered_confidence,
             account_balance,
             stops['stop_distance'],
             tick_value,
@@ -404,8 +603,9 @@ class RiskManager:
 
         # Combine results
         return {
-            'signal': signal,
-            'confidence': confidence,
+            'signal': filtered_signal,
+            'confidence': filtered_confidence,
+            'original_confidence': confidence,
             'contracts': position['contracts'],
             'entry_price': entry_price,
             'stop_loss': stops['stop_loss'],
@@ -416,8 +616,13 @@ class RiskManager:
             'risk_dollars': position['risk_dollars'],
             'risk_pct': position['risk_pct'],
             'regime': regime,
+            'trend_direction': trend_direction,
+            'trend_strength': trend_strength,
+            'is_counter_trend': stops.get('is_counter_trend', False),
+            'target_adjustment': stops.get('target_adjustment', 1.0),
             'regime_multiplier': position.get('regime_multiplier', 1.0),
             'confidence_factor': stops['confidence_factor'],
+            'filter_details': filter_details,
             'reason': position.get('reason', 'Trade approved')
         }
 
