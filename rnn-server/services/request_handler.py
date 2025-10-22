@@ -225,7 +225,8 @@ def handle_realtime_request(
             }
 
         # Check market regime before trading
-        regime = calculate_market_regime(current_data, lookback=20)
+        # IMPORTANT: use_adx=False because we removed ADX indicator in Phase 2
+        regime = calculate_market_regime(current_data, lookback=20, use_adx=False)
         skip_trading, regime_reason = should_skip_trading(regime)
 
         if skip_trading:

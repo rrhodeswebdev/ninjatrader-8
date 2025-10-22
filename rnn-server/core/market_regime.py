@@ -25,10 +25,10 @@ def calculate_market_regime(
     bars: pd.DataFrame,
     lookback: int = 20,
     historical_lookback: int = 100,
-    trend_strength_threshold: float = 0.4,
-    directional_consistency_threshold: float = 0.4,
+    trend_strength_threshold: float = 0.3,  # LOWERED: Was 0.4, more lenient without ADX
+    directional_consistency_threshold: float = 0.35,  # LOWERED: Was 0.4, more lenient without ADX
     volatility_percentile_threshold: float = 0.75,
-    use_adx: bool = True,
+    use_adx: bool = False,  # CHANGED: Default to False (pure price action)
     adx_threshold: float = 25.0
 ) -> Dict[str, Any]:
     """
