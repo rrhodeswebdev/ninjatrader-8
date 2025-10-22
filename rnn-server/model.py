@@ -75,48 +75,54 @@ def augment_time_series(X_sequence, augmentation_prob=0.3):
 
     return X_sequence
 
-def calculate_adx(high, low, close, period=14):
-    """
-    Calculate Average Directional Index (ADX) for trend strength detection
-    ADX > 25: Strong trend
-    ADX < 20: Ranging/weak trend
-    """
-    n = len(high)
-    if n < period + 1:
-        return np.zeros(n)
+# ============================================================================
+# INDICATOR FUNCTIONS - COMMENTED OUT FOR PURE PRICE ACTION MIGRATION
+# These lagging indicators are being replaced with pure price action features
+# See: core/price_action_features.py and PRICE_ACTION_MIGRATION_SUMMARY.md
+# ============================================================================
 
-    # Calculate +DM and -DM
-    plus_dm = np.zeros(n)
-    minus_dm = np.zeros(n)
-
-    for i in range(1, n):
-        high_diff = high[i] - high[i-1]
-        low_diff = low[i-1] - low[i]
-
-        if high_diff > low_diff and high_diff > 0:
-            plus_dm[i] = high_diff
-        if low_diff > high_diff and low_diff > 0:
-            minus_dm[i] = low_diff
-
-    # Calculate True Range
-    tr = np.zeros(n)
-    for i in range(1, n):
-        tr[i] = max(high[i] - low[i],
-                   abs(high[i] - close[i-1]),
-                   abs(low[i] - close[i-1]))
-
-    # Smooth with EMA
-    import pandas as pd
-    plus_di = pd.Series(plus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
-    minus_di = pd.Series(minus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
-
-    # Calculate DX
-    dx = np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-8) * 100
-
-    # ADX is smoothed DX
-    adx = pd.Series(dx).ewm(span=period, adjust=False).mean().values
-
-    return adx
+# def calculate_adx(high, low, close, period=14):
+#     """
+#     Calculate Average Directional Index (ADX) for trend strength detection
+#     ADX > 25: Strong trend
+#     ADX < 20: Ranging/weak trend
+#     """
+#     n = len(high)
+#     if n < period + 1:
+#         return np.zeros(n)
+#
+#     # Calculate +DM and -DM
+#     plus_dm = np.zeros(n)
+#     minus_dm = np.zeros(n)
+#
+#     for i in range(1, n):
+#         high_diff = high[i] - high[i-1]
+#         low_diff = low[i-1] - low[i]
+#
+#         if high_diff > low_diff and high_diff > 0:
+#             plus_dm[i] = high_diff
+#         if low_diff > high_diff and low_diff > 0:
+#             minus_dm[i] = low_diff
+#
+#     # Calculate True Range
+#     tr = np.zeros(n)
+#     for i in range(1, n):
+#         tr[i] = max(high[i] - low[i],
+#                    abs(high[i] - close[i-1]),
+#                    abs(low[i] - close[i-1]))
+#
+#     # Smooth with EMA
+#     import pandas as pd
+#     plus_di = pd.Series(plus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
+#     minus_di = pd.Series(minus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
+#
+#     # Calculate DX
+#     dx = np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-8) * 100
+#
+#     # ADX is smoothed DX
+#     adx = pd.Series(dx).ewm(span=period, adjust=False).mean().values
+#
+#     return adx
 
 
 def detect_market_regime(df, lookback=100):
@@ -258,201 +264,201 @@ def calculate_hurst_exponent(prices, min_window=10):
         return 0.5, 1.0
 
 
-def calculate_atr(high, low, close, period=14):
-    """
-    Calculate Average True Range (VECTORIZED VERSION)
-    Measures market volatility
-    """
-    n = len(high)
-    if n < period + 1:
-        return np.zeros(n)
-
-    # PERFORMANCE OPTIMIZATION: Vectorized True Range calculation
-    hl = high[1:] - low[1:]
-    hc = np.abs(high[1:] - close[:-1])
-    lc = np.abs(low[1:] - close[:-1])
-    tr = np.maximum(np.maximum(hl, hc), lc)
-
-    # PERFORMANCE OPTIMIZATION: Use pandas rolling mean (faster than loop)
-    import pandas as pd
-    tr_series = pd.Series(tr)
-    atr_values = tr_series.rolling(window=period, min_periods=1).mean().values
-
-    # Add zero for first value (no previous close) - ensure correct length
-    atr = np.zeros(n)
-    atr[1:] = atr_values
-
-    return atr
-
-
-def calculate_rsi(close, period=14):
-    """
-    Calculate Relative Strength Index (RSI)
-    RSI > 70: Overbought
-    RSI < 30: Oversold
-    """
-    n = len(close)
-    if n < period + 1:
-        return np.zeros(n)
-
-    # Calculate price changes
-    delta = np.diff(close)
-
-    # Separate gains and losses
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-
-    # Calculate average gain and loss using EMA
-    import pandas as pd
-    avg_gain = pd.Series(gain).ewm(span=period, adjust=False).mean().values
-    avg_loss = pd.Series(loss).ewm(span=period, adjust=False).mean().values
-
-    # Calculate RS and RSI
-    rs = avg_gain / (avg_loss + 1e-8)
-    rsi = 100 - (100 / (1 + rs))
-
-    # Add zero for first value (no previous close)
-    rsi_full = np.zeros(n)
-    rsi_full[1:] = rsi
-
-    return rsi_full
+# def calculate_atr(high, low, close, period=14):
+#     """
+#     Calculate Average True Range (VECTORIZED VERSION)
+#     Measures market volatility
+#     """
+#     n = len(high)
+#     if n < period + 1:
+#         return np.zeros(n)
+#
+#     # PERFORMANCE OPTIMIZATION: Vectorized True Range calculation
+#     hl = high[1:] - low[1:]
+#     hc = np.abs(high[1:] - close[:-1])
+#     lc = np.abs(low[1:] - close[:-1])
+#     tr = np.maximum(np.maximum(hl, hc), lc)
+#
+#     # PERFORMANCE OPTIMIZATION: Use pandas rolling mean (faster than loop)
+#     import pandas as pd
+#     tr_series = pd.Series(tr)
+#     atr_values = tr_series.rolling(window=period, min_periods=1).mean().values
+#
+#     # Add zero for first value (no previous close) - ensure correct length
+#     atr = np.zeros(n)
+#     atr[1:] = atr_values
+#
+#     return atr
 
 
-def calculate_rsi_divergence(close, rsi, lookback=10):
-    """
-    Detect RSI divergence (price vs RSI direction mismatch) - VECTORIZED VERSION
-    +1: Bullish divergence (price down, RSI up)
-    -1: Bearish divergence (price up, RSI down)
-    0: No divergence
-
-    PERFORMANCE OPTIMIZATION: Fully vectorized for ~10x speedup
-    """
-    n = len(close)
-    divergence = np.zeros(n)
-
-    # PERFORMANCE OPTIMIZATION: Vectorized sliding window calculation
-    price_changes = close[lookback:] - close[:-lookback]
-    rsi_changes = rsi[lookback:] - rsi[:-lookback]
-
-    # Vectorized divergence detection
-    # Bullish divergence: price_change < 0 and rsi_change > 0
-    # Bearish divergence: price_change > 0 and rsi_change < 0
-    divergence[lookback:] = np.where(
-        (price_changes < 0) & (rsi_changes > 0), 1,
-        np.where((price_changes > 0) & (rsi_changes < 0), -1, 0)
-    )
-
-    return divergence
-
-
-def calculate_macd(close, fast=12, slow=26, signal=9):
-    """
-    Calculate MACD (Moving Average Convergence Divergence)
-    Returns: macd_line, signal_line, histogram
-    """
-    n = len(close)
-    if n < slow:
-        return np.zeros(n), np.zeros(n), np.zeros(n)
-
-    import pandas as pd
-    close_series = pd.Series(close)
-
-    # Calculate EMAs
-    ema_fast = close_series.ewm(span=fast, adjust=False).mean().values
-    ema_slow = close_series.ewm(span=slow, adjust=False).mean().values
-
-    # MACD line
-    macd_line = ema_fast - ema_slow
-
-    # Signal line (EMA of MACD)
-    macd_series = pd.Series(macd_line)
-    signal_line = macd_series.ewm(span=signal, adjust=False).mean().values
-
-    # Histogram (difference)
-    histogram = macd_line - signal_line
-
-    return macd_line, signal_line, histogram
+# def calculate_rsi(close, period=14):
+#     """
+#     Calculate Relative Strength Index (RSI)
+#     RSI > 70: Overbought
+#     RSI < 30: Oversold
+#     """
+#     n = len(close)
+#     if n < period + 1:
+#         return np.zeros(n)
+#
+#     # Calculate price changes
+#     delta = np.diff(close)
+#
+#     # Separate gains and losses
+#     gain = np.where(delta > 0, delta, 0)
+#     loss = np.where(delta < 0, -delta, 0)
+#
+#     # Calculate average gain and loss using EMA
+#     import pandas as pd
+#     avg_gain = pd.Series(gain).ewm(span=period, adjust=False).mean().values
+#     avg_loss = pd.Series(loss).ewm(span=period, adjust=False).mean().values
+#
+#     # Calculate RS and RSI
+#     rs = avg_gain / (avg_loss + 1e-8)
+#     rsi = 100 - (100 / (1 + rs))
+#
+#     # Add zero for first value (no previous close)
+#     rsi_full = np.zeros(n)
+#     rsi_full[1:] = rsi
+#
+#     return rsi_full
 
 
-def calculate_vwma_deviation(close, volume, period=20):
-    """
-    Calculate Volume-Weighted Moving Average deviation
-    Better than SMA for futures markets with volume information
-    """
-    n = len(close)
-    if n < period:
-        return np.zeros(n)
-
-    import pandas as pd
-    close_series = pd.Series(close)
-    volume_series = pd.Series(volume)
-
-    # Volume-weighted MA
-    vwma = (close_series * volume_series).rolling(period).sum() / volume_series.rolling(period).sum()
-    vwma = vwma.bfill().values  # Fixed: Use bfill() instead of deprecated fillna(method='bfill')
-
-    # Deviation as percentage
-    deviation = (close - vwma) / (vwma + 1e-8)
-
-    return deviation
-
-
-def calculate_garman_klass_volatility(open_prices, high, low, close, period=20):
-    """
-    Calculate Garman-Klass volatility estimator
-    More efficient than Parkinson volatility
-    """
-    n = len(close)
-    if n < 2:
-        return np.zeros(n)
-
-    # Garman-Klass formula
-    hl = np.log(high / (low + 1e-8)) ** 2
-    co = np.log(close / (open_prices + 1e-8)) ** 2
-    gk_vol = 0.5 * hl - (2 * np.log(2) - 1) * co
-
-    # Rolling average
-    import pandas as pd
-    gk_vol_series = pd.Series(gk_vol)
-    gk_vol_smooth = gk_vol_series.rolling(period, min_periods=1).mean().values
-
-    return gk_vol_smooth
+# def calculate_rsi_divergence(close, rsi, lookback=10):
+#     """
+#     Detect RSI divergence (price vs RSI direction mismatch) - VECTORIZED VERSION
+#     +1: Bullish divergence (price down, RSI up)
+#     -1: Bearish divergence (price up, RSI down)
+#     0: No divergence
+#
+#     PERFORMANCE OPTIMIZATION: Fully vectorized for ~10x speedup
+#     """
+#     n = len(close)
+#     divergence = np.zeros(n)
+#
+#     # PERFORMANCE OPTIMIZATION: Vectorized sliding window calculation
+#     price_changes = close[lookback:] - close[:-lookback]
+#     rsi_changes = rsi[lookback:] - rsi[:-lookback]
+#
+#     # Vectorized divergence detection
+#     # Bullish divergence: price_change < 0 and rsi_change > 0
+#     # Bearish divergence: price_change > 0 and rsi_change < 0
+#     divergence[lookback:] = np.where(
+#         (price_changes < 0) & (rsi_changes > 0), 1,
+#         np.where((price_changes > 0) & (rsi_changes < 0), -1, 0)
+#     )
+#
+#     return divergence
 
 
-def calculate_price_impact(close, volume):
-    """
-    Calculate price impact per unit volume
-    Measures market liquidity and institutional activity
-    """
-    n = len(close)
+# def calculate_macd(close, fast=12, slow=26, signal=9):
+#     """
+#     Calculate MACD (Moving Average Convergence Divergence)
+#     Returns: macd_line, signal_line, histogram
+#     """
+#     n = len(close)
+#     if n < slow:
+#         return np.zeros(n), np.zeros(n), np.zeros(n)
+#
+#     import pandas as pd
+#     close_series = pd.Series(close)
+#
+#     # Calculate EMAs
+#     ema_fast = close_series.ewm(span=fast, adjust=False).mean().values
+#     ema_slow = close_series.ewm(span=fast, adjust=False).mean().values
+#
+#     # MACD line
+#     macd_line = ema_fast - ema_slow
+#
+#     # Signal line (EMA of MACD)
+#     macd_series = pd.Series(macd_line)
+#     signal_line = macd_series.ewm(span=signal, adjust=False).mean().values
+#
+#     # Histogram (difference)
+#     histogram = macd_line - signal_line
+#
+#     return macd_line, signal_line, histogram
 
-    # Price impact = abs(price change) / volume
-    price_change = np.abs(np.diff(close))
-    price_impact = np.zeros(n)
-    price_impact[1:] = price_change / (volume[1:] + 1)
 
-    return price_impact
+# def calculate_vwma_deviation(close, volume, period=20):
+#     """
+#     Calculate Volume-Weighted Moving Average deviation
+#     Better than SMA for futures markets with volume information
+#     """
+#     n = len(close)
+#     if n < period:
+#         return np.zeros(n)
+#
+#     import pandas as pd
+#     close_series = pd.Series(close)
+#     volume_series = pd.Series(volume)
+#
+#     # Volume-weighted MA
+#     vwma = (close_series * volume_series).rolling(period).sum() / volume_series.rolling(period).sum()
+#     vwma = vwma.bfill().values  # Fixed: Use bfill() instead of deprecated fillna(method='bfill')
+#
+#     # Deviation as percentage
+#     deviation = (close - vwma) / (vwma + 1e-8)
+#
+#     return deviation
 
 
-def calculate_volume_weighted_price_change(close, volume, period=5):
-    """
-    Volume-weighted price change
-    Emphasizes price moves with high volume
-    """
-    n = len(close)
-    vwpc = np.zeros(n)
+# def calculate_garman_klass_volatility(open_prices, high, low, close, period=20):
+#     """
+#     Calculate Garman-Klass volatility estimator
+#     More efficient than Parkinson volatility
+#     """
+#     n = len(close)
+#     if n < 2:
+#         return np.zeros(n)
+#
+#     # Garman-Klass formula
+#     hl = np.log(high / (low + 1e-8)) ** 2
+#     co = np.log(close / (open_prices + 1e-8)) ** 2
+#     gk_vol = 0.5 * hl - (2 * np.log(2) - 1) * co
+#
+#     # Rolling average
+#     import pandas as pd
+#     gk_vol_series = pd.Series(gk_vol)
+#     gk_vol_smooth = gk_vol_series.rolling(period, min_periods=1).mean().values
+#
+#     return gk_vol_smooth
 
-    import pandas as pd
-    close_series = pd.Series(close)
-    volume_series = pd.Series(volume)
 
-    price_change = close_series.diff()
-    avg_volume = volume_series.rolling(period, min_periods=1).mean()
+# def calculate_price_impact(close, volume):
+#     """
+#     Calculate price impact per unit volume
+#     Measures market liquidity and institutional activity
+#     """
+#     n = len(close)
+#
+#     # Price impact = abs(price change) / volume
+#     price_change = np.abs(np.diff(close))
+#     price_impact = np.zeros(n)
+#     price_impact[1:] = price_change / (volume[1:] + 1)
+#
+#     return price_impact
 
-    vwpc_values = (price_change * volume_series) / (avg_volume + 1)
-    vwpc = vwpc_values.fillna(0).values
 
-    return vwpc
+# def calculate_volume_weighted_price_change(close, volume, period=5):
+#     """
+#     Volume-weighted price change
+#     Emphasizes price moves with high volume
+#     """
+#     n = len(close)
+#     vwpc = np.zeros(n)
+#
+#     import pandas as pd
+#     close_series = pd.Series(close)
+#     volume_series = pd.Series(volume)
+#
+#     price_change = close_series.diff()
+#     avg_volume = volume_series.rolling(period, min_periods=1).mean()
+#
+#     vwpc_values = (price_change * volume_series) / (avg_volume + 1)
+#     vwpc = vwpc_values.fillna(0).values
+#
+#     return vwpc
 
 
 def align_secondary_to_primary(df_primary, df_secondary):
@@ -2253,30 +2259,25 @@ class TradingModel:
                 else:
                     print(f"  → Overall RANDOM WALK market")
 
-        # Calculate ATR
-        atr = calculate_atr(df['high'].values, df['low'].values, df['close'].values)
+        # ============================================================================
+        # REMOVED: All lagging indicator calculations for pure price action migration
+        # ============================================================================
+        # OLD CODE (commented out):
+        # atr = calculate_atr(df['high'].values, df['low'].values, df['close'].values)
+        # rsi = calculate_rsi(df['close'].values)
+        # rsi_divergence = calculate_rsi_divergence(df['close'].values, rsi)
+        # macd_line, macd_signal, macd_histogram = calculate_macd(df['close'].values)
+        # vwma_dev = calculate_vwma_deviation(df['close'].values, volume)
+        # gk_volatility = calculate_garman_klass_volatility(df['open'].values, df['high'].values, df['low'].values, df['close'].values)
+        # price_impact = calculate_price_impact(df['close'].values, volume)
+        # vwpc = calculate_volume_weighted_price_change(df['close'].values, volume)
 
-        # Calculate all advanced price features
+        # NEW: Calculate all PURE PRICE ACTION features in one call
+        from core.price_action_features import prepare_price_action_data
+        df_with_pa_features = prepare_price_action_data(df)
+
+        # Calculate all advanced price features (market structure, order flow, patterns)
         price_features = calculate_price_features(df)
-
-        # NEW: Calculate RSI
-        rsi = calculate_rsi(df['close'].values)
-        rsi_divergence = calculate_rsi_divergence(df['close'].values, rsi)
-
-        # NEW: Calculate MACD
-        macd_line, macd_signal, macd_histogram = calculate_macd(df['close'].values)
-
-        # NEW: Calculate VWMA deviation
-        volume = df['volume'].values if 'volume' in df.columns else np.ones(len(df))
-        vwma_dev = calculate_vwma_deviation(df['close'].values, volume)
-
-        # NEW: Calculate Garman-Klass volatility
-        gk_volatility = calculate_garman_klass_volatility(df['open'].values, df['high'].values,
-                                                           df['low'].values, df['close'].values)
-
-        # NEW: Calculate price impact and volume-weighted price change
-        price_impact = calculate_price_impact(df['close'].values, volume)
-        vwpc = calculate_volume_weighted_price_change(df['close'].values, volume)
 
         # Calculate candlestick patterns
         candlestick_patterns = detect_candlestick_patterns(df)
@@ -2323,29 +2324,18 @@ class TradingModel:
             recent_changes = np.abs(np.diff(ohlc[i-5:i+1, 3]) / ohlc[i-5:i, 3])
             price_change_magnitude[i] = np.mean(recent_changes)
 
-        # NEW: Feature Interaction Terms
-        # 1. Volume-Volatility regime interaction (high vol + high volume = explosive move)
-        vol_volume_interaction = volatility_regime_features['volatility_regime'] * volatility_regime_features['volume_regime']
+        # REMOVED: Feature Interaction Terms (indicators-based)
+        # vol_volume_interaction = volatility_regime_features['volatility_regime'] * volatility_regime_features['volume_regime']
+        # trend_tf_interaction = price_features['trend_strength'] * secondary_features['tf2_trend_direction']
+        # explosive_signal = price_features['position_in_range'] * price_features['std_dev_20']
 
-        # 2. Trend-Timeframe alignment interaction (strong when both aligned)
-        trend_tf_interaction = price_features['trend_strength'] * secondary_features['tf2_trend_direction']
+        # REMOVED: Lagged Features for indicators
+        # rsi_lag1 = np.roll(rsi, 1)
+        # rsi_lag2 = np.roll(rsi, 2)
+        # macd_hist_lag1 = np.roll(macd_histogram, 1)
+        # macd_hist_lag2 = np.roll(macd_histogram, 2)
 
-        # 3. Price position * Volatility (explosive signal when at extremes with high vol)
-        explosive_signal = price_features['position_in_range'] * price_features['std_dev_20']
-
-        # NEW: Lagged Features for critical indicators
-        # RSI lag 1 and 2
-        rsi_lag1 = np.roll(rsi, 1)
-        rsi_lag1[0] = rsi[0]
-        rsi_lag2 = np.roll(rsi, 2)
-        rsi_lag2[:2] = rsi[0]
-
-        # MACD histogram lag 1 and 2
-        macd_hist_lag1 = np.roll(macd_histogram, 1)
-        macd_hist_lag1[0] = macd_histogram[0]
-        macd_hist_lag2 = np.roll(macd_histogram, 2)
-        macd_hist_lag2[:2] = macd_histogram[0]
-
+        # KEPT: Lagged Features for PURE PRICE ACTION
         # Velocity lag 1 and 2
         velocity_lag1 = np.roll(price_features['velocity'], 1)
         velocity_lag1[0] = price_features['velocity'][0]
@@ -2440,12 +2430,17 @@ class TradingModel:
             if arr_len != n_bars:
                 raise ValueError(f"Feature '{name}' has length {arr_len}, expected {n_bars}")
 
+        # ============================================================================
+        # PURE PRICE ACTION FEATURES - REBUILT FROM SCRATCH
+        # Removed all lagging indicators (ATR, RSI, MACD, etc.)
+        # ============================================================================
+
         features = np.column_stack([
-            # Core features: OHLC + Hurst + ATR = 7
+            # Core features: OHLC + Hurst = 6 (removed ATR)
             ohlc,                                    # 4
             hurst_H_values,                          # 1
             hurst_C_values,                          # 1
-            atr,                                     # 1
+            # REMOVED: atr (lagging indicator)
             # Price momentum: 2
             price_features['velocity'],              # 1
             price_features['acceleration'],          # 1
@@ -2541,37 +2536,22 @@ class TradingModel:
             realtime_order_flow['delta_acceleration'], # 1 (NEW)
             # Price change magnitude: 1
             price_change_magnitude,                    # 1
-            # NEW: RSI indicators: 2
-            rsi,                                       # 1
-            rsi_divergence,                            # 1
-            # NEW: MACD indicators: 3
-            macd_line,                                 # 1
-            macd_signal,                               # 1
-            macd_histogram,                            # 1
-            # NEW: Additional indicators: 4
-            vwma_dev,                                  # 1
-            gk_volatility,                             # 1
-            price_impact,                              # 1
-            vwpc,                                      # 1
-            # NEW: Feature Interactions: 3
-            vol_volume_interaction,                    # 1
-            trend_tf_interaction,                      # 1
-            explosive_signal,                          # 1
-            # NEW: Lagged Features: 8
-            rsi_lag1,                                  # 1
-            rsi_lag2,                                  # 1
-            macd_hist_lag1,                            # 1
-            macd_hist_lag2,                            # 1
+            # REMOVED: RSI indicators (2 features) - lagging
+            # REMOVED: MACD indicators (3 features) - double lagging
+            # REMOVED: VWMA deviation, GK volatility, price impact, VWPC (4 features) - all lagging/derived
+            # REMOVED: Feature interactions using indicators (3 features)
+            # REMOVED: RSI and MACD lagged features (4 features)
+            #
+            # KEPT: Pure price action lagged features
             velocity_lag1,                             # 1
             velocity_lag2,                             # 1
             cum_delta_lag1,                            # 1
             cum_delta_lag2,                            # 1
-            # PRIORITY 3: TREND BOOST - Duplicate critical trend features to increase their weight
-            # These emphasized features help the model learn trend-following better
-            np.array(hurst_H_values) * 2,              # 1 - Hurst emphasized
-            price_features['trend_strength'] * 1.5,    # 1 - Trend strength emphasized
-            secondary_features['tf2_trend_direction'] * 1.5,  # 1 - Multi-timeframe trend
-            volatility_regime_features['trending_score'] * 1.5,  # 1 - ADX-based
+            # TREND BOOST - Pure price action trend features (no indicators)
+            np.array(hurst_H_values) * 2,              # 1 - Hurst emphasized (pure)
+            price_features['trend_strength'] * 1.5,    # 1 - Trend strength emphasized (pure)
+            secondary_features['tf2_trend_direction'] * 1.5,  # 1 - Multi-timeframe trend (pure)
+            # REMOVED: trending_score (was ADX-based)
             # Trend momentum (new feature: trend acceleration)
             np.gradient(price_features['trend_strength']),  # 1 - Is trend strengthening?
             # Hurst * trend_strength interaction (strong when both align)
@@ -2580,11 +2560,17 @@ class TradingModel:
 
         # Only log during training
         if fit_scaler:
-            # New feature count: Was 99, Added 6 trend boost features = 105 total
-            # Original: 99, Added: 6 trend boost features
-            # Total: 99 + 6 = 105 features
+            # UPDATED FEATURE COUNT (Pure Price Action Migration)
+            # Original: 105 features
+            # Removed indicators: ATR(1) + RSI(2) + MACD(3) + Others(4) + Interactions(3) + Lagged(4) + TrendingScore(1) = 18 removed
+            # New total: 105 - 18 = 87 features (PURE PRICE ACTION)
+            print(f"\\n{'='*80}")
+            print(f"PURE PRICE ACTION FEATURES (Indicators Removed)")
+            print(f"{'='*80}")
             print(f"Total features: {features.shape[1]}")
-            print(f"Breakdown: OHLC:4 + Hurst:2 + ATR:1 + Momentum:2 + Patterns:15 + Deviation:8 + OrderFlow:1 + Time:3 + Microstructure:5 + VolRegime:4 + MultiTF:9 + Candlestick:7 + SR:4 + VolumeProfile:5 + RealtimeOrderFlow:8 + PriceChangeMag:1 + RSI:2 + MACD:3 + NewIndicators:4 + Interactions:3 + Lagged:8 + TrendBoost:6 = 105")
+            print(f"Expected: 87 (was 105 before removing indicators)")
+            print(f"Removed: ATR, RSI, MACD, VWMA, GK Vol, Price Impact, VWPC, Indicator Interactions, Indicator Lags, ADX-based features")
+            print(f"{'='*80}\\n")
 
         # Scale the features
         if fit_scaler:

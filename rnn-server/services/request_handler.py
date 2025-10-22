@@ -2,6 +2,7 @@
 
 from typing import Dict, Any, Callable
 import pandas as pd
+import numpy as np
 from core.validation import (
     validate_bars_list,
     validate_dataframe,
@@ -298,17 +299,28 @@ def handle_realtime_request(
 
             current_price = current_data['close'].iloc[-1] if len(current_data) > 0 else 0.0
 
-            # Get ATR
-            if 'atr' in current_data.columns and len(current_data) > 0:
-                current_atr = current_data['atr'].iloc[-1]
+            # Get volatility estimate for trailing stops
+            # MIGRATED: Replaced ATR (lagging indicator) with pure candle range
+            if len(current_data) >= 14:
+                # Calculate average true range using pure price action (no smoothing)
+                # True range = max(high-low, |high-prev_close|, |low-prev_close|)
+                high = current_data['high'].values
+                low = current_data['low'].values
+                close = current_data['close'].values
+
+                # Calculate true range for last 14 bars
+                tr = np.zeros(len(high))
+                for i in range(1, len(high)):
+                    tr[i] = max(
+                        high[i] - low[i],
+                        abs(high[i] - close[i-1]),
+                        abs(low[i] - close[i-1])
+                    )
+
+                # Simple average (no EMA smoothing - pure price action)
+                current_atr = np.mean(tr[-14:]) if len(tr) >= 14 else 15.0
             else:
-                from model import calculate_atr
-                atr_values = calculate_atr(
-                    current_data['high'].values,
-                    current_data['low'].values,
-                    current_data['close'].values
-                )
-                current_atr = atr_values[-1] if len(atr_values) > 0 else 15.0
+                current_atr = 15.0  # Default fallback
 
             trailing_stop_price = stop_calculator.calculate_trailing_stop(
                 entry_price=entry_price,
