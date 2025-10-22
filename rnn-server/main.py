@@ -377,7 +377,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             )
 
             signal = trade_params['signal']
-            confidence = trade_params['confidence']
+            confidence = trade_params.get('confidence', 0.0)  # Default to 0.0 for hold signals
 
             # Apply confidence threshold filtering (for backward compatibility)
             filtered_signal = signal
@@ -398,10 +398,42 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             # ========================================================================
 
             exit_analysis = {'should_exit': False, 'reason': 'No position', 'urgency': 'none'}
+            trailing_stop_price = 0.0
             current_position = request.get('current_position', 'flat')
             entry_price = request.get('entry_price', 0.0)
+            current_stop_loss = request.get('current_stop_loss', 0.0)
 
             if current_position in ['long', 'short'] and entry_price > 0:
+                # Calculate trailing stop if position is profitable
+                from risk_management import StopTargetCalculator
+                stop_calculator = StopTargetCalculator()
+
+                # Get current price from data
+                current_price = current_data['close'].iloc[-1] if len(current_data) > 0 else 0.0
+
+                # Get ATR for trailing stop calculation
+                if 'atr' in current_data.columns and len(current_data) > 0:
+                    current_atr = current_data['atr'].iloc[-1]
+                else:
+                    from model import calculate_atr
+                    atr_values = calculate_atr(
+                        current_data['high'].values,
+                        current_data['low'].values,
+                        current_data['close'].values
+                    )
+                    current_atr = atr_values[-1] if len(atr_values) > 0 else 15.0
+
+                # Calculate trailing stop (activates at 1R profit, trails 0.75 ATR)
+                trailing_stop_price = stop_calculator.calculate_trailing_stop(
+                    entry_price=entry_price,
+                    current_price=current_price,
+                    direction=current_position,
+                    atr=current_atr,
+                    initial_stop=current_stop_loss if current_stop_loss > 0 else trade_params.get('stop_loss', 0),
+                    trail_activation_rr=1.0,   # Start trailing at 1R profit
+                    trail_distance_atr=0.75    # Trail 0.75 ATR behind price
+                )
+
                 exit_analysis = trading_model.detect_early_exit(
                     current_data,
                     current_position,
@@ -510,6 +542,14 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                     "reason": exit_analysis['reason'],
                     "urgency": exit_analysis['urgency'],
                     "early_exit_triggered": exit_analysis['should_exit']  # Flag for NinjaTrader
+                },
+                # Trailing stop (NEW - dynamically adjusts stop to lock in profits)
+                "trailing_stop": {
+                    "enabled": current_position in ['long', 'short'] and entry_price > 0,
+                    "trailing_stop_price": sanitize_float(trailing_stop_price),
+                    "use_trailing": trailing_stop_price != 0.0,  # True if trailing stop is active
+                    "activation_threshold": "1R profit",
+                    "trail_distance": "0.75 ATR"
                 }
             }
 

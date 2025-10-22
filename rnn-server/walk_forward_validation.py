@@ -1,261 +1,389 @@
-#!/usr/bin/env python3
 """
-Walk-Forward Validation for RNN Trading Model
-Tests model robustness across different time periods
+Walk-Forward Validation Module
+
+Proper time series validation that prevents look-ahead bias.
+Uses expanding or rolling windows to simulate realistic trading conditions.
 """
 
-import pandas as pd
 import numpy as np
-from model import TradingModel
-from trading_metrics import evaluate_trading_performance
-import json
-from pathlib import Path
+import pandas as pd
+from typing import List, Dict, Tuple, Optional
+from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-def walk_forward_validation(df, n_splits=5, min_train_size=1000, test_size=400):
+class WalkForwardValidator:
     """
-    Walk-forward validation with expanding window
+    Walk-forward validation for time series models
 
-    Args:
-        df: Full dataset
-        n_splits: Number of validation folds
-        min_train_size: Minimum bars needed for training
-        test_size: Number of bars in each test period
-
-    Returns:
-        Dictionary with aggregated results across all folds
+    Unlike random train/test splits, walk-forward validation:
+    - Respects temporal ordering
+    - Prevents look-ahead bias
+    - Simulates realistic deployment conditions
     """
-    print("="*70)
-    print("WALK-FORWARD VALIDATION")
-    print("="*70)
 
-    results = []
-    total_bars = len(df)
+    def __init__(self,
+                 train_days: int = 60,
+                 test_days: int = 10,
+                 step_days: int = 5,
+                 min_train_samples: int = 1000):
+        """
+        Args:
+            train_days: Days of training data
+            test_days: Days of testing data
+            step_days: Days to step forward for next split
+            min_train_samples: Minimum samples required for training
+        """
+        self.train_days = train_days
+        self.test_days = test_days
+        self.step_days = step_days
+        self.min_train_samples = min_train_samples
 
-    # Calculate fold boundaries
-    print(f"\nTotal bars: {total_bars}")
-    print(f"Minimum training size: {min_train_size}")
-    print(f"Test size per fold: {test_size}")
-    print(f"Number of folds: {n_splits}\n")
+    def split_timeseries(self,
+                        data: pd.DataFrame,
+                        date_column: str = 'date') -> List[Dict]:
+        """
+        Generate walk-forward train/test splits
 
-    for fold in range(n_splits):
-        # Expanding window: train on all data up to test period
-        train_end = min_train_size + (fold * test_size)
-        test_start = train_end
-        test_end = min(test_start + test_size, total_bars)
+        Example:
+        - Train: Days 1-60, Test: Days 61-70
+        - Train: Days 6-65, Test: Days 66-75
+        - Train: Days 11-70, Test: Days 71-80
 
-        # Need enough data for test
-        if test_end - test_start < 100:
-            print(f"Fold {fold+1}: Insufficient test data ({test_end - test_start} bars), skipping")
-            break
+        Args:
+            data: DataFrame with time series data
+            date_column: Name of date/datetime column
 
-        print(f"\n{'='*70}")
-        print(f"FOLD {fold+1}/{n_splits}")
-        print(f"{'='*70}")
-        print(f"Training:   bars 0 to {train_end} ({train_end} bars)")
-        print(f"Testing:    bars {test_start} to {test_end} ({test_end - test_start} bars)")
+        Returns:
+            List of split dictionaries with train/test indices
+        """
+        # Ensure data is sorted by date
+        data = data.sort_values(date_column).reset_index(drop=True)
 
-        # Split data
-        train_data = df.iloc[:train_end].copy()
-        test_data = df.iloc[test_start:test_end].copy()
+        dates = pd.to_datetime(data[date_column])
+        unique_dates = sorted(dates.dt.date.unique())
 
-        # Train fresh model on this fold
-        model = TradingModel(sequence_length=40)
+        splits = []
+        start_idx = 0
 
-        print(f"\nTraining model on fold {fold+1}...")
-        model.train(train_data, epochs=50, batch_size=32, validation_split=0.2)
+        while start_idx + self.train_days + self.test_days <= len(unique_dates):
+            # Define date ranges
+            train_start_date = unique_dates[start_idx]
+            train_end_date = unique_dates[start_idx + self.train_days - 1]
+            test_start_date = unique_dates[start_idx + self.train_days]
+            test_end_date = unique_dates[min(start_idx + self.train_days + self.test_days - 1,
+                                            len(unique_dates) - 1)]
 
-        # Evaluate on test period
-        print(f"\nEvaluating on test period...")
-        fold_metrics = evaluate_fold(model, test_data, fold+1)
+            # Get indices for these date ranges
+            train_mask = (dates.dt.date >= train_start_date) & (dates.dt.date <= train_end_date)
+            test_mask = (dates.dt.date >= test_start_date) & (dates.dt.date <= test_end_date)
 
-        results.append({
-            'fold': fold + 1,
-            'train_size': train_end,
-            'test_size': test_end - test_start,
-            'metrics': fold_metrics
-        })
+            train_indices = data[train_mask].index.tolist()
+            test_indices = data[test_mask].index.tolist()
 
-        # Save fold results
-        save_fold_results(results, fold+1)
+            # Ensure minimum training samples
+            if len(train_indices) < self.min_train_samples:
+                logger.warning(f"Skipping split - insufficient training samples: {len(train_indices)}")
+                start_idx += self.step_days
+                continue
 
-    # Aggregate results across folds
-    print(f"\n{'='*70}")
-    print("AGGREGATED RESULTS ACROSS ALL FOLDS")
-    print(f"{'='*70}")
+            split = {
+                'train_indices': train_indices,
+                'test_indices': test_indices,
+                'train_start': train_start_date,
+                'train_end': train_end_date,
+                'test_start': test_start_date,
+                'test_end': test_end_date,
+                'fold': len(splits)
+            }
 
-    aggregate_results(results)
+            splits.append(split)
 
-    return results
+            # Move forward
+            start_idx += self.step_days
+
+        logger.info(f"Generated {len(splits)} walk-forward splits")
+
+        return splits
+
+    def validate_model(self,
+                      model,
+                      data: pd.DataFrame,
+                      features_columns: List[str],
+                      target_column: str,
+                      date_column: str = 'date',
+                      fit_func = None,
+                      predict_func = None) -> pd.DataFrame:
+        """
+        Perform walk-forward validation on a model
+
+        Args:
+            model: Model instance with fit/predict methods
+            data: DataFrame with features and targets
+            features_columns: List of feature column names
+            target_column: Target column name
+            date_column: Date column name
+            fit_func: Custom fit function (optional)
+            predict_func: Custom predict function (optional)
+
+        Returns:
+            DataFrame with validation results per fold
+        """
+        splits = self.split_timeseries(data, date_column)
+
+        results = []
+
+        for split in splits:
+            fold = split['fold']
+            logger.info(f"Fold {fold + 1}/{len(splits)}: "
+                       f"Train {split['train_start']} to {split['train_end']}, "
+                       f"Test {split['test_start']} to {split['test_end']}")
+
+            # Get train and test data
+            train_data = data.loc[split['train_indices']]
+            test_data = data.loc[split['test_indices']]
+
+            X_train = train_data[features_columns].values
+            y_train = train_data[target_column].values
+
+            X_test = test_data[features_columns].values
+            y_test = test_data[target_column].values
+
+            # Fit model on training data only
+            if fit_func is not None:
+                fit_func(model, X_train, y_train)
+            else:
+                model.fit(X_train, y_train)
+
+            # Predict on test data (unseen future data)
+            if predict_func is not None:
+                predictions = predict_func(model, X_test)
+            else:
+                predictions = model.predict(X_test)
+
+            # Calculate metrics
+            metrics = self._calculate_metrics(y_test, predictions)
+
+            result = {
+                'fold': fold,
+                'train_start': split['train_start'],
+                'train_end': split['train_end'],
+                'test_start': split['test_start'],
+                'test_end': split['test_end'],
+                'train_samples': len(split['train_indices']),
+                'test_samples': len(split['test_indices']),
+                **metrics
+            }
+
+            results.append(result)
+
+        results_df = pd.DataFrame(results)
+
+        # Print summary
+        self._print_summary(results_df)
+
+        return results_df
+
+    def _calculate_metrics(self,
+                          y_true: np.ndarray,
+                          y_pred: np.ndarray) -> Dict[str, float]:
+        """
+        Calculate validation metrics
+
+        Args:
+            y_true: True labels
+            y_pred: Predictions
+
+        Returns:
+            Dictionary of metrics
+        """
+        # Binary classification metrics
+        if len(np.unique(y_true)) == 2:
+            accuracy = np.mean((y_pred > 0.5) == y_true)
+
+            # Precision and recall
+            tp = np.sum((y_pred > 0.5) & (y_true == 1))
+            fp = np.sum((y_pred > 0.5) & (y_true == 0))
+            fn = np.sum((y_pred <= 0.5) & (y_true == 1))
+
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+            return {
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1_score': f1
+            }
+        else:
+            # Regression metrics
+            mse = np.mean((y_true - y_pred) ** 2)
+            rmse = np.sqrt(mse)
+            mae = np.mean(np.abs(y_true - y_pred))
+
+            return {
+                'mse': mse,
+                'rmse': rmse,
+                'mae': mae
+            }
+
+    def _print_summary(self, results_df: pd.DataFrame):
+        """Print validation summary"""
+        print("\n" + "="*80)
+        print("WALK-FORWARD VALIDATION SUMMARY")
+        print("="*80)
+
+        print(f"\nTotal Folds: {len(results_df)}")
+
+        # Get metric columns (exclude metadata)
+        metric_cols = [col for col in results_df.columns
+                      if col not in ['fold', 'train_start', 'train_end',
+                                    'test_start', 'test_end', 'train_samples', 'test_samples']]
+
+        print("\nAverage Metrics Across Folds:")
+        for col in metric_cols:
+            mean_val = results_df[col].mean()
+            std_val = results_df[col].std()
+            print(f"  {col:15s}: {mean_val:.4f} ± {std_val:.4f}")
+
+        print("\n" + "="*80 + "\n")
 
 
-def evaluate_fold(model, test_data, fold_num):
+class ExpandingWindowValidator:
     """
-    Evaluate model on a single test fold
+    Expanding window validation (anchored walk-forward)
 
-    Returns:
-        Dictionary of performance metrics
+    Training window starts from beginning and expands,
+    while test window slides forward.
     """
-    predictions = []
-    actual_signals = []
-    confidences = []
-    price_changes = []
 
-    # Generate predictions for test period
-    for i in range(len(test_data) - model.sequence_length - 5):
-        # Get sequence up to current bar
-        sequence_data = test_data.iloc[:model.sequence_length + i]
+    def __init__(self,
+                 initial_train_days: int = 60,
+                 test_days: int = 10,
+                 step_days: int = 5):
+        """
+        Args:
+            initial_train_days: Initial training period
+            test_days: Testing period
+            step_days: Step size
+        """
+        self.initial_train_days = initial_train_days
+        self.test_days = test_days
+        self.step_days = step_days
 
-        # Get prediction
-        try:
-            signal, confidence = model.predict(sequence_data)
+    def split_timeseries(self,
+                        data: pd.DataFrame,
+                        date_column: str = 'date') -> List[Dict]:
+        """
+        Generate expanding window splits
 
-            # Map signal to class
-            signal_to_class = {'short': 0, 'hold': 1, 'long': 2}
-            pred_class = signal_to_class[signal]
+        Example:
+        - Train: Days 1-60, Test: Days 61-70
+        - Train: Days 1-65, Test: Days 66-75
+        - Train: Days 1-70, Test: Days 71-80
 
-            predictions.append(pred_class)
-            confidences.append(confidence)
+        Args:
+            data: DataFrame with time series data
+            date_column: Name of date column
 
-            # Calculate actual price change for next bar
-            current_idx = model.sequence_length + i
-            if current_idx + 1 < len(test_data):
-                current_price = test_data.iloc[current_idx]['close']
-                next_price = test_data.iloc[current_idx + 1]['close']
-                price_change = (next_price - current_price) / current_price
-                price_changes.append(price_change)
+        Returns:
+            List of split dictionaries
+        """
+        data = data.sort_values(date_column).reset_index(drop=True)
 
-                # Determine actual label (simplified)
-                threshold = 0.0005  # 0.05%
-                if price_change > threshold:
-                    actual_signals.append(2)  # Long
-                elif price_change < -threshold:
-                    actual_signals.append(0)  # Short
-                else:
-                    actual_signals.append(1)  # Hold
+        dates = pd.to_datetime(data[date_column])
+        unique_dates = sorted(dates.dt.date.unique())
 
-        except Exception as e:
-            print(f"Error on prediction {i}: {e}")
-            continue
+        splits = []
+        anchor_date = unique_dates[0]  # Anchor to beginning
+        test_start_idx = self.initial_train_days
 
-    # Calculate metrics
-    predictions = np.array(predictions)
-    actual_signals = np.array(actual_signals)
-    confidences = np.array(confidences)
-    price_changes = np.array(price_changes)
+        while test_start_idx + self.test_days <= len(unique_dates):
+            train_end_date = unique_dates[test_start_idx - 1]
+            test_start_date = unique_dates[test_start_idx]
+            test_end_date = unique_dates[min(test_start_idx + self.test_days - 1,
+                                            len(unique_dates) - 1)]
 
-    # Overall accuracy
-    accuracy = np.mean(predictions == actual_signals)
+            # Training: from anchor to current point
+            train_mask = (dates.dt.date >= anchor_date) & (dates.dt.date <= train_end_date)
+            test_mask = (dates.dt.date >= test_start_date) & (dates.dt.date <= test_end_date)
 
-    # High-confidence accuracy
-    high_conf_mask = confidences >= 0.65
-    if np.sum(high_conf_mask) > 0:
-        high_conf_accuracy = np.mean(predictions[high_conf_mask] == actual_signals[high_conf_mask])
-        high_conf_pct = np.mean(high_conf_mask) * 100
-    else:
-        high_conf_accuracy = 0.0
-        high_conf_pct = 0.0
+            split = {
+                'train_indices': data[train_mask].index.tolist(),
+                'test_indices': data[test_mask].index.tolist(),
+                'train_start': anchor_date,
+                'train_end': train_end_date,
+                'test_start': test_start_date,
+                'test_end': test_end_date,
+                'fold': len(splits)
+            }
 
-    # Trading metrics
-    daily_pnl_config = {'dailyGoal': 500.0, 'dailyMaxLoss': 250.0}
-    trading_metrics = evaluate_trading_performance(
-        predictions, actual_signals, price_changes, daily_pnl_config
-    )
+            splits.append(split)
 
-    # Print fold results
-    print(f"\nFold {fold_num} Results:")
-    print(f"  Accuracy: {accuracy:.2%}")
-    print(f"  High-Conf Accuracy: {high_conf_accuracy:.2%} ({high_conf_pct:.1f}% of predictions)")
-    print(f"  Sharpe Ratio: {trading_metrics['sharpe_ratio']:.3f}")
-    print(f"  Win Rate: {trading_metrics['win_rate']:.2%}")
-    print(f"  Profit Factor: {trading_metrics['profit_factor']:.3f}")
-    print(f"  Max Drawdown: {trading_metrics['max_drawdown']:.2%}")
+            test_start_idx += self.step_days
 
-    return {
-        'accuracy': accuracy,
-        'high_conf_accuracy': high_conf_accuracy,
-        'high_conf_pct': high_conf_pct,
-        'sharpe_ratio': trading_metrics['sharpe_ratio'],
-        'win_rate': trading_metrics['win_rate'],
-        'profit_factor': trading_metrics['profit_factor'],
-        'max_drawdown': trading_metrics['max_drawdown'],
-        'num_trades': trading_metrics['num_trades'],
-        'total_return': trading_metrics['total_return']
-    }
+        logger.info(f"Generated {len(splits)} expanding window splits")
+
+        return splits
 
 
-def aggregate_results(results):
-    """Aggregate and display results across all folds"""
+class PurgedKFold:
+    """
+    Purged K-Fold for time series with overlapping samples
 
-    # Extract metrics
-    accuracies = [r['metrics']['accuracy'] for r in results]
-    high_conf_accs = [r['metrics']['high_conf_accuracy'] for r in results]
-    sharpes = [r['metrics']['sharpe_ratio'] for r in results]
-    win_rates = [r['metrics']['win_rate'] for r in results]
-    profit_factors = [r['metrics']['profit_factor'] for r in results]
-    max_drawdowns = [r['metrics']['max_drawdown'] for r in results]
+    Used when training samples have temporal dependencies or
+    when features use look-ahead windows.
 
-    # Calculate statistics
-    print(f"\nMetric Averages Across {len(results)} Folds:")
-    print(f"  Accuracy:           {np.mean(accuracies):.2%} ± {np.std(accuracies):.2%}")
-    print(f"  High-Conf Accuracy: {np.mean(high_conf_accs):.2%} ± {np.std(high_conf_accs):.2%}")
-    print(f"  Sharpe Ratio:       {np.mean(sharpes):.3f} ± {np.std(sharpes):.3f}")
-    print(f"  Win Rate:           {np.mean(win_rates):.2%} ± {np.std(win_rates):.2%}")
-    print(f"  Profit Factor:      {np.mean(profit_factors):.3f} ± {np.std(profit_factors):.3f}")
-    print(f"  Max Drawdown:       {np.mean(max_drawdowns):.2%} ± {np.std(max_drawdowns):.2%}")
+    Purges samples near test set to prevent information leakage.
+    """
 
-    # Consistency check
-    print(f"\nConsistency Analysis:")
-    print(f"  Sharpe > 1.0 in {sum([1 for s in sharpes if s > 1.0])}/{len(sharpes)} folds")
-    print(f"  Accuracy > 45% in {sum([1 for a in accuracies if a > 0.45])}/{len(accuracies)} folds")
-    print(f"  Win Rate > 50% in {sum([1 for w in win_rates if w > 0.50])}/{len(win_rates)} folds")
+    def __init__(self,
+                 n_splits: int = 5,
+                 purge_gap: int = 10):
+        """
+        Args:
+            n_splits: Number of folds
+            purge_gap: Number of samples to purge before/after test set
+        """
+        self.n_splits = n_splits
+        self.purge_gap = purge_gap
 
-    # Overall assessment
-    avg_sharpe = np.mean(sharpes)
-    avg_accuracy = np.mean(accuracies)
+    def split(self, data: pd.DataFrame) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Generate purged k-fold splits
 
-    print(f"\n{'='*70}")
-    print("OVERALL ASSESSMENT")
-    print(f"{'='*70}")
+        Args:
+            data: DataFrame
 
-    if avg_sharpe > 1.5 and avg_accuracy > 0.48:
-        print("✅ EXCELLENT: Model is robust and ready for production")
-    elif avg_sharpe > 1.0 and avg_accuracy > 0.45:
-        print("✅ GOOD: Model shows promise, consider additional tuning")
-    elif avg_sharpe > 0.5:
-        print("⚠️  MARGINAL: Model needs improvement before live trading")
-    else:
-        print("❌ POOR: Model not ready for live trading")
+        Returns:
+            List of (train_indices, test_indices) tuples
+        """
+        n_samples = len(data)
+        indices = np.arange(n_samples)
 
+        test_size = n_samples // self.n_splits
+        splits = []
 
-def save_fold_results(results, fold_num):
-    """Save intermediate results to JSON"""
-    output_dir = Path('validation_results')
-    output_dir.mkdir(exist_ok=True)
+        for i in range(self.n_splits):
+            # Test set
+            test_start = i * test_size
+            test_end = (i + 1) * test_size if i < self.n_splits - 1 else n_samples
 
-    output_file = output_dir / f'walk_forward_results_fold{fold_num}.json'
+            test_indices = indices[test_start:test_end]
 
-    # Convert numpy types to Python types for JSON serialization
-    serializable_results = []
-    for r in results:
-        serializable_results.append({
-            'fold': int(r['fold']),
-            'train_size': int(r['train_size']),
-            'test_size': int(r['test_size']),
-            'metrics': {k: float(v) for k, v in r['metrics'].items()}
-        })
+            # Purge samples around test set
+            purge_start = max(0, test_start - self.purge_gap)
+            purge_end = min(n_samples, test_end + self.purge_gap)
 
-    with open(output_file, 'w') as f:
-        json.dump(serializable_results, f, indent=2)
+            # Training set (excluding test and purge regions)
+            train_mask = (indices < purge_start) | (indices >= purge_end)
+            train_indices = indices[train_mask]
 
-    print(f"\n✓ Saved results to {output_file}")
+            splits.append((train_indices, test_indices))
 
+        logger.info(f"Generated {len(splits)} purged k-fold splits")
 
-if __name__ == "__main__":
-    # Example usage with synthetic data
-    print("Walk-Forward Validation Script")
-    print("This script requires historical market data")
-    print("\nTo use:")
-    print("1. Load your historical data into a DataFrame")
-    print("2. Ensure it has columns: time, open, high, low, close, volume")
-    print("3. Call: results = walk_forward_validation(df, n_splits=5)")
+        return splits

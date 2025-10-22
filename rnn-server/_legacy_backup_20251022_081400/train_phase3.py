@@ -21,10 +21,20 @@ from model import TradingModel
 from adaptive_retraining import AdaptiveRetrainingManager
 from regime_models import RegimeModelManager
 from meta_labeling import MetaLabeler
+from rth_filter import filter_rth_data, get_rth_hours_info
 
 
-def load_data(file_path: str = 'historical_data.csv'):
-    """Load historical data"""
+def load_data(file_path: str = 'historical_data.csv', rth_only: bool = False):
+    """
+    Load historical data
+
+    Args:
+        file_path: Path to CSV file with historical data
+        rth_only: If True, filter to Regular Trading Hours only (9:30 AM - 4:00 PM ET)
+
+    Returns:
+        DataFrame with OHLCV data
+    """
     data_file = Path(file_path)
 
     if not data_file.exists():
@@ -37,6 +47,18 @@ def load_data(file_path: str = 'historical_data.csv'):
 
     print(f"\n✓ Loaded {len(df)} bars from {data_file}")
     print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
+
+    # Apply RTH filter if requested
+    if rth_only:
+        print("\n🕐 Filtering to RTH (Regular Trading Hours) only...")
+        df = filter_rth_data(df)
+
+        if len(df) == 0:
+            print("⚠️  Warning: No RTH data found. Check your data timezone and hours.")
+            print("    Proceeding without RTH filter...")
+            # Reload original data
+            df = pd.read_csv(data_file)
+            df['time'] = pd.to_datetime(df['time'])
 
     return df
 
@@ -69,7 +91,7 @@ def generate_synthetic_data(n_bars=3000):
     return df
 
 
-def train_primary_model(df: pd.DataFrame, epochs: int = 100):
+def train_primary_model(df: pd.DataFrame, epochs: int = 150):
     """Train primary trading model with optimized hyperparameters"""
     print("\n" + "="*70)
     print("STEP 1: TRAINING PRIMARY MODEL (OPTIMIZED)")
@@ -78,7 +100,7 @@ def train_primary_model(df: pd.DataFrame, epochs: int = 100):
     # PERFORMANCE OPTIMIZATION: Updated hyperparameters
     # - Increased batch size from 32 to 64 (with gradient accumulation = effective 256)
     # - Reduced learning rate from 0.001 to 0.0005 for better convergence
-    # - Increased default epochs from 50 to 100
+    # - INCREASED default epochs from 100 to 150 for better convergence
     # - Reduced sequence length from 40 to 15 (better for 1-min data)
     model = TradingModel(sequence_length=15)
     model.train(df, epochs=epochs, batch_size=64, learning_rate=0.0005, validation_split=0.2)
@@ -245,6 +267,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train Phase 3 advanced features')
     parser.add_argument('--data-file', type=str, default='historical_data.csv',
                         help='Path to historical data CSV')
+    parser.add_argument('--rth-only', action='store_true',
+                        help='Filter training data to RTH (Regular Trading Hours) only (9:30 AM - 4:00 PM ET)')
     parser.add_argument('--all', action='store_true',
                         help='Train all Phase 3 features')
     parser.add_argument('--train-primary', action='store_true',
@@ -257,12 +281,19 @@ def main():
                         help='Train meta-labeling filter')
     parser.add_argument('--validate', action='store_true',
                         help='Validate all systems')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='Training epochs (default: 100 - optimized)')
-    parser.add_argument('--meta-epochs', type=int, default=100,
-                        help='Meta-labeling epochs (default: 100)')
+    parser.add_argument('--epochs', type=int, default=150,
+                        help='Training epochs (default: 150 - optimized for better convergence)')
+    parser.add_argument('--meta-epochs', type=int, default=150,
+                        help='Meta-labeling epochs (default: 150)')
+    parser.add_argument('--show-rth-info', action='store_true',
+                        help='Display RTH hours information and exit')
 
     args = parser.parse_args()
+
+    # Show RTH info if requested
+    if args.show_rth_info:
+        get_rth_hours_info()
+        return
 
     # If --all, enable everything
     if args.all:
@@ -282,8 +313,12 @@ def main():
     print("PHASE 3 TRAINING SCRIPT")
     print("="*70)
 
+    if args.rth_only:
+        print("\n🕐 RTH-ONLY MODE: Training will use Regular Trading Hours data only")
+        print("   (9:30 AM - 4:00 PM ET, Monday-Friday)")
+
     # Load data
-    df = load_data(args.data_file)
+    df = load_data(args.data_file, rth_only=args.rth_only)
 
     if df is None or len(df) < 1000:
         print("\n❌ Error: Not enough data for training (need at least 1000 bars)")

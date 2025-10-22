@@ -178,41 +178,42 @@ class StopTargetCalculator:
         self.base_target_atr = base_target_atr_multiplier
 
         # Regime-specific stop/target multipliers
+        # UPDATED: Increased target_atr to hold winning trades longer and capture more profit
         self.regime_params = {
             'trending_normal': {
                 'stop_atr': 1.5,
-                'target_atr': 3.0,
-                'risk_reward': 2.0  # Target 2x stop
+                'target_atr': 4.0,  # INCREASED from 3.0 to 4.0
+                'risk_reward': 2.67  # INCREASED from 2.0 to 2.67
             },
             'trending_high_vol': {
                 'stop_atr': 2.0,
-                'target_atr': 2.5,
-                'risk_reward': 1.25
+                'target_atr': 4.0,  # INCREASED from 2.5 to 4.0
+                'risk_reward': 2.0  # INCREASED from 1.25 to 2.0
             },
             'ranging_normal': {
                 'stop_atr': 1.0,
-                'target_atr': 1.5,
-                'risk_reward': 1.5
+                'target_atr': 2.5,  # INCREASED from 1.5 to 2.5
+                'risk_reward': 2.5  # INCREASED from 1.5 to 2.5
             },
             'ranging_low_vol': {
                 'stop_atr': 0.8,
-                'target_atr': 1.2,
-                'risk_reward': 1.5
+                'target_atr': 2.0,  # INCREASED from 1.2 to 2.0
+                'risk_reward': 2.5  # INCREASED from 1.5 to 2.5
             },
             'high_vol_chaos': {
                 'stop_atr': 2.5,
-                'target_atr': 2.0,
-                'risk_reward': 0.8  # Tighter target in chaos
+                'target_atr': 3.0,  # INCREASED from 2.0 to 3.0
+                'risk_reward': 1.2  # INCREASED from 0.8 to 1.2
             },
             'transitional': {
                 'stop_atr': 1.3,
-                'target_atr': 2.0,
-                'risk_reward': 1.5
+                'target_atr': 3.0,  # INCREASED from 2.0 to 3.0
+                'risk_reward': 2.3  # INCREASED from 1.5 to 2.3
             },
             'unknown': {
                 'stop_atr': 1.5,
-                'target_atr': 2.5,
-                'risk_reward': 1.67
+                'target_atr': 3.5,  # INCREASED from 2.5 to 3.5
+                'risk_reward': 2.33  # INCREASED from 1.67 to 2.33
             }
         }
 
@@ -263,10 +264,10 @@ class StopTargetCalculator:
         stop_multiplier = 1.0
 
         if is_counter_trend and trend_strength > 20:
-            # TIGHTER TARGETS for counter-trend in strong trends
-            # The stronger the trend, the tighter the target
-            strength_factor = min(1.0, (trend_strength - 20) / 20)  # 0 to 1 as ADX goes 20->40
-            target_multiplier = 1.0 - (0.4 * strength_factor)  # Reduce up to 40%
+            # REDUCED PENALTY: Targets reduced by max 20% (was 40%) for counter-trend trades
+            # This allows counter-trend trades to capture more profit
+            strength_factor = min(1.0, (trend_strength - 20) / 40)  # CHANGED: /40 instead of /20
+            target_multiplier = 1.0 - (0.2 * strength_factor)  # CHANGED: 0.2 instead of 0.4
 
             print(f"⚠️  Counter-trend {direction} trade in {trend_direction} trend (ADX={trend_strength:.1f})")
             print(f"   Target reduced by {(1-target_multiplier)*100:.0f}% (multiplier={target_multiplier:.2f})")
@@ -383,7 +384,7 @@ class CounterTrendFilter:
         trending_adx_threshold: float = 25.0,
         counter_trend_confidence_penalty: float = 0.5,  # Reduce confidence by 50% in trends
         ranging_confidence_boost: float = 0.15,  # Boost confidence by 15% in ranging
-        block_counter_trends_in_strong_trends: bool = True  # Block entirely vs just penalize
+        block_counter_trends_in_strong_trends: bool = False  # CHANGED: False to allow counter-trend trades
     ):
         self.enable_filtering = enable_filtering
         self.trending_adx_threshold = trending_adx_threshold
@@ -555,6 +556,7 @@ class RiskManager:
         if signal == 'hold':
             return {
                 'signal': 'hold',
+                'confidence': confidence,
                 'contracts': 0,
                 'entry_price': 0,
                 'stop_loss': 0,
@@ -573,6 +575,7 @@ class RiskManager:
         if filtered_signal == 'hold':
             return {
                 'signal': 'hold',
+                'confidence': filtered_confidence,
                 'contracts': 0,
                 'entry_price': 0,
                 'stop_loss': 0,

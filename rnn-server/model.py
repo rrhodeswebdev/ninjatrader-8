@@ -3765,13 +3765,14 @@ class TradingModel:
             prob_short, prob_hold, prob_long = 0.33, 0.34, 0.33
 
         # EXIT CONDITION 1: Opposite direction signal with high confidence
-        if current_position == 'long' and signal == 'short' and confidence > 0.35:
+        # INCREASED from 0.35 to 0.65 to hold winning trades longer
+        if current_position == 'long' and signal == 'short' and confidence > 0.65:
             return {
                 'should_exit': True,
                 'reason': f'Strong SHORT signal ({confidence*100:.1f}%) against LONG position',
                 'urgency': 'immediate'
             }
-        elif current_position == 'short' and signal == 'long' and confidence > 0.35:
+        elif current_position == 'short' and signal == 'long' and confidence > 0.65:
             return {
                 'should_exit': True,
                 'reason': f'Strong LONG signal ({confidence*100:.1f}%) against SHORT position',
@@ -3779,8 +3780,9 @@ class TradingModel:
             }
 
         # EXIT CONDITION 2: Confidence collapse (model uncertainty)
-        # If we're in a position and HOLD probability spikes above 50%
-        if prob_hold > 0.50:
+        # If we're in a position and HOLD probability spikes above 70%
+        # INCREASED from 0.50 to 0.70 to reduce premature exits
+        if prob_hold > 0.70:
             return {
                 'should_exit': True,
                 'reason': f'High HOLD probability ({prob_hold*100:.1f}%) - model uncertain',
@@ -3789,13 +3791,14 @@ class TradingModel:
 
         # EXIT CONDITION 3: Directional probability reversal
         # Long position but SHORT probability exceeds LONG probability
-        if current_position == 'long' and prob_short > prob_long + 0.05:
+        # INCREASED from 0.05 to 0.15 to filter out noise and hold longer
+        if current_position == 'long' and prob_short > prob_long + 0.15:
             return {
                 'should_exit': True,
                 'reason': f'Directional reversal: SHORT prob ({prob_short*100:.1f}%) > LONG prob ({prob_long*100:.1f}%)',
                 'urgency': 'normal'
             }
-        elif current_position == 'short' and prob_long > prob_short + 0.05:
+        elif current_position == 'short' and prob_long > prob_short + 0.15:
             return {
                 'should_exit': True,
                 'reason': f'Directional reversal: LONG prob ({prob_long*100:.1f}%) > SHORT prob ({prob_short*100:.1f}%)',
@@ -3803,23 +3806,26 @@ class TradingModel:
             }
 
         # EXIT CONDITION 4: Momentum loss
-        # Check if recent bars show momentum reversal (last 3 bars)
-        if len(recent_bars_df) >= 3:
-            last_3_closes = recent_bars_df['close'].tail(3).values
+        # Check if recent bars show momentum reversal (last 5 bars)
+        # INCREASED from 3 to 5 bars to filter out normal market noise
+        if len(recent_bars_df) >= 5:
+            last_5_closes = recent_bars_df['close'].tail(5).values
             if current_position == 'long':
-                # Check for lower highs
-                if last_3_closes[-1] < last_3_closes[-2] < last_3_closes[-3]:
+                # Check for 5 consecutive lower closes
+                if (last_5_closes[-1] < last_5_closes[-2] < last_5_closes[-3] <
+                    last_5_closes[-4] < last_5_closes[-5]):
                     return {
                         'should_exit': True,
-                        'reason': 'Momentum loss: 3 consecutive lower closes in LONG',
+                        'reason': 'Momentum loss: 5 consecutive lower closes in LONG',
                         'urgency': 'normal'
                     }
             else:  # short
-                # Check for higher lows
-                if last_3_closes[-1] > last_3_closes[-2] > last_3_closes[-3]:
+                # Check for 5 consecutive higher closes
+                if (last_5_closes[-1] > last_5_closes[-2] > last_5_closes[-3] >
+                    last_5_closes[-4] > last_5_closes[-5]):
                     return {
                         'should_exit': True,
-                        'reason': 'Momentum loss: 3 consecutive higher closes in SHORT',
+                        'reason': 'Momentum loss: 5 consecutive higher closes in SHORT',
                         'urgency': 'normal'
                     }
 
