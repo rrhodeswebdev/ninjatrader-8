@@ -2317,7 +2317,7 @@ class TradingModel:
         n_bars = len(ohlc)
         assert len(hurst_H_values) == n_bars, f"Hurst H mismatch: {len(hurst_H_values)} vs {n_bars}"
         assert len(hurst_C_values) == n_bars, f"Hurst C mismatch: {len(hurst_C_values)} vs {n_bars}"
-        assert len(atr) == n_bars, f"ATR mismatch: {len(atr)} vs {n_bars}"
+        # REMOVED: assert len(atr) == n_bars (ATR removed in Phase 2)
 
         # Calculate price change magnitude (recent volatility indicator)
         price_change_magnitude = np.zeros(n_bars)
@@ -2360,7 +2360,7 @@ class TradingModel:
             'ohlc': ohlc,
             'hurst_H': hurst_H_values,
             'hurst_C': hurst_C_values,
-            'atr': atr,
+            # REMOVED: 'atr': atr (indicator removed in Phase 2)
             'velocity': price_features['velocity'],
             'acceleration': price_features['acceleration'],
             'range_ratio': price_features['range_ratio'],
@@ -3850,17 +3850,26 @@ class TradingModel:
         current_bar = recent_bars_df.iloc[-1]
         entry_price = current_bar['close']
 
-        # Get ATR (calculate if not in dataframe)
-        if 'atr' in recent_bars_df.columns:
-            atr = recent_bars_df['atr'].iloc[-1]
+        # Get volatility estimate (pure price action - no ATR indicator)
+        # Calculate average true range using pure candle range (no EMA smoothing)
+        if len(recent_bars_df) >= 14:
+            high = recent_bars_df['high'].values
+            low = recent_bars_df['low'].values
+            close = recent_bars_df['close'].values
+
+            # Calculate true range for last 14 bars
+            tr = np.zeros(len(high))
+            for i in range(1, len(high)):
+                tr[i] = max(
+                    high[i] - low[i],
+                    abs(high[i] - close[i-1]),
+                    abs(low[i] - close[i-1])
+                )
+
+            # Simple average (no EMA - pure price action)
+            atr = np.mean(tr[-14:]) if len(tr) >= 14 else 15.0
         else:
-            # Calculate ATR on the fly
-            atr_values = calculate_atr(
-                recent_bars_df['high'].values,
-                recent_bars_df['low'].values,
-                recent_bars_df['close'].values
-            )
-            atr = atr_values[-1] if len(atr_values) > 0 else 15.0  # Default to 15 points
+            atr = 15.0  # Default fallback
 
         # DEBUG: Log ATR and data size
         print(f"\n🔍 RISK CALCULATION DEBUG:")
@@ -3868,14 +3877,17 @@ class TradingModel:
         print(f"   ATR: {atr:.2f} points")
         print(f"   Entry price: ${entry_price:.2f}")
 
-        # Get enhanced regime info (includes trend direction and strength)
-        regime_info = detect_market_regime_enhanced(recent_bars_df, lookback=min(100, len(recent_bars_df)-1))
+        # Get regime info using PURE PRICE ACTION (not indicator-based)
+        from core.market_regime import calculate_market_regime
+        regime_info = calculate_market_regime(recent_bars_df, lookback=min(20, len(recent_bars_df)-1), use_adx=False)
         regime = regime_info['regime']
-        trend_direction = regime_info['trend_direction']
-        trend_strength = regime_info['trend_strength']
+
+        # Extract metrics for logging
+        trend_strength = regime_info['metrics']['trend_strength']
+        directional_consistency = regime_info['metrics']['directional_consistency']
 
         print(f"   Regime: {regime}")
-        print(f"   Trend: {trend_direction.upper()} (ADX={trend_strength:.1f})")
+        print(f"   Trend strength: {trend_strength:.2f}, Directional consistency: {directional_consistency:.2f}")
 
         # Calculate trade parameters using risk manager with enhanced regime info
         risk_mgr = RiskManager()
