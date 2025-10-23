@@ -1658,9 +1658,9 @@ class ImprovedTradingRNN(nn.Module):
     - Added batch normalization for training stability
     - Added learnable positional encoding for better time awareness
     - Deeper FC layers (4 layers instead of 3)
-    - Optimized for 97 input features and sequence_length=15
+    - Optimized for 87 input features (pure price action) and sequence_length=15
     """
-    def __init__(self, input_size=97, hidden_size=128, num_layers=2, output_size=3):
+    def __init__(self, input_size=87, hidden_size=128, num_layers=2, output_size=3):  # Updated: 97→87 (Phase 2)
         super(ImprovedTradingRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -2091,9 +2091,10 @@ class TradingModel:
     Wrapper class for training and prediction with state management
     """
     def __init__(self, sequence_length=15, model_path='models/trading_model.pth'):
-        # IMPROVED: Updated input_size from 99 to 105 (added 6 trend boost features)
-        # IMPROVED: sequence_length=15, num_layers=2 for better generalization
-        self.model = ImprovedTradingRNN(input_size=105, hidden_size=128, num_layers=2, output_size=3)
+        # PHASE 2 UPDATE: Changed input_size from 105 → 87 (removed 18 indicator features)
+        # Pure price action features only (no ATR, RSI, MACD, etc.)
+        # sequence_length=15, num_layers=2 for better generalization
+        self.model = ImprovedTradingRNN(input_size=87, hidden_size=128, num_layers=2, output_size=3)
         self.scaler = StandardScaler()
         self.sequence_length = sequence_length
         self.is_trained = False
