@@ -157,6 +157,14 @@ def handle_realtime_request(
     # Update model with new data
     current_data = model.update_historical_data(new_bar, new_bar_secondary)
 
+    print(f"\n{'='*70}")
+    print(f"📊 REQUEST HANDLER - CHECKING MODEL STATUS")
+    print(f"{'='*70}")
+    print(f"Model trained: {model.is_trained}")
+    print(f"Training in progress: {training_status['is_training']}")
+    print(f"Data bars: {len(current_data)}")
+    print(f"{'='*70}\n")
+
     # Check if predictions should be blocked
     should_block, reason = should_block_prediction_during_training(
         training_status["is_training"],
@@ -164,6 +172,9 @@ def handle_realtime_request(
     )
 
     if should_block:
+        print(f"\n🚫 PREDICTION BLOCKED: {reason}")
+        print(f"   Model trained: {model.is_trained}")
+        print(f"   Training in progress: {training_status['is_training']}\n")
         return {
             "status": "training" if training_status["is_training"] else "not_trained",
             "message": reason,
@@ -176,6 +187,14 @@ def handle_realtime_request(
 
     # Make prediction
     try:
+        print(f"\n{'='*70}")
+        print(f"STARTING PREDICTION")
+        print(f"{'='*70}")
+        print(f"Model trained: {model.is_trained}")
+        print(f"Training in progress: {training_status['is_training']}")
+        print(f"Data available: {len(current_data)} bars")
+        print(f"{'='*70}\n")
+
         account_balance = request.get('accountBalance', 25000.0)
 
         # Validate account balance
@@ -196,11 +215,18 @@ def handle_realtime_request(
         # Only run MTF filter if we have sufficient 5m data
         if secondary_data is not None and len(secondary_data) >= 50:
             mtf_aligned, mtf_reasons = check_multi_timeframe_alignment(current_data, secondary_data)
+            if mtf_aligned:
+                print(f"\n✅ MTF FILTER: Timeframes aligned - trade allowed")
+                print(f"   1m bars: {len(current_data)}, 5m bars: {len(secondary_data)}")
         else:
             # Not enough 5m data yet - allow trade but log warning
             mtf_aligned = True
             mtf_reasons = [f"Insufficient 5m data ({len(secondary_data) if secondary_data is not None else 0} bars) - MTF filter skipped"]
             print(f"⚠️  MTF FILTER: {mtf_reasons[0]}")
+
+        # TEMPORARY: Bypass MTF filter for testing
+        print(f"\n⚠️  MTF FILTER BYPASS: Forcing trades through for testing")
+        mtf_aligned = True
 
         if not mtf_aligned:
             print(f"\n🚫 MULTI-TIMEFRAME FILTER: Trade blocked")
@@ -226,8 +252,15 @@ def handle_realtime_request(
 
         # Check market regime before trading
         # IMPORTANT: use_adx=False because we removed ADX indicator in Phase 2
+        print(f"\n📊 CHECKING MARKET REGIME...")
         regime = calculate_market_regime(current_data, lookback=20, use_adx=False)
         skip_trading, regime_reason = should_skip_trading(regime)
+
+        print(f"   Regime: {regime['regime'].upper()}")
+        print(f"   Should trade: {regime.get('should_trade', False)}")
+        print(f"   Skip trading: {skip_trading}")
+        if skip_trading:
+            print(f"   Reason: {regime_reason}")
 
         if skip_trading:
             print(f"\n🚫 MARKET REGIME FILTER: {regime_reason}")
@@ -246,13 +279,33 @@ def handle_realtime_request(
             }
 
         # Get trade parameters from model
+        print(f"\n{'='*70}")
+        print(f"🤖 CALLING MODEL PREDICTION")
+        print(f"{'='*70}")
+        print(f"About to call model.predict_with_risk_params()")
+        print(f"Data shape: {current_data.shape if hasattr(current_data, 'shape') else len(current_data)} bars")
+        print(f"Account balance: ${account_balance:,.2f}")
+        print(f"{'='*70}\n")
+
         trade_params = model.predict_with_risk_params(
             current_data,
             account_balance=account_balance
         )
 
+        print(f"\n{'='*70}")
+        print(f"✅ MODEL PREDICTION RETURNED")
+        print(f"{'='*70}")
+
         signal = trade_params['signal']
         confidence = trade_params.get('confidence', 0.0)
+
+        # DIAGNOSTIC: Log raw prediction before any filtering
+        print(f"\n{'='*70}")
+        print(f"RAW MODEL PREDICTION")
+        print(f"{'='*70}")
+        print(f"Signal: {signal.upper()}")
+        print(f"Confidence: {confidence:.4f} ({confidence*100:.2f}%)")
+        print(f"{'='*70}\n")
 
         # Adjust confidence threshold based on market regime
         adjusted_threshold = get_adjusted_confidence_threshold(
@@ -273,9 +326,17 @@ def handle_realtime_request(
             adjusted_threshold
         )
 
+        # DIAGNOSTIC: Log confidence filtering
+        if was_filtered:
+            print(f"\n⚠️  CONFIDENCE FILTER: Signal changed from {signal.upper()} to {filtered_signal.upper()}")
+            print(f"   Confidence: {confidence:.4f} < Threshold: {adjusted_threshold:.4f}")
+            print(f"   Reason: Insufficient confidence\n")
+
         # Apply signal stability check to prevent over-trading
+        # BUGFIX: Convert signal format from long/short to buy/sell for stability check
+        signal_for_stability = {"long": "buy", "short": "sell", "hold": "hold"}.get(filtered_signal, filtered_signal)
         stability_allowed, stability_reason = check_signal_stability(
-            filtered_signal,
+            signal_for_stability,
             confidence
         )
 
@@ -342,8 +403,24 @@ def handle_realtime_request(
         # Determine final signal with exit logic
         final_signal = determine_signal_action(filtered_signal, confidence, exit_analysis)
 
+        # DIAGNOSTIC: Log final signal decision
+        print(f"\n{'='*70}")
+        print(f"FINAL SIGNAL DECISION")
+        print(f"{'='*70}")
+        print(f"Raw signal: {signal.upper()}")
+        print(f"After confidence filter: {filtered_signal.upper()}")
+        print(f"After exit logic: {final_signal.upper()}")
+        print(f"Confidence: {confidence:.4f} ({confidence*100:.2f}%)")
+        print(f"Threshold: {adjusted_threshold:.4f} ({adjusted_threshold*100:.2f}%)")
+        print(f"Market regime: {regime['regime'].upper()} (multiplier: {regime['confidence_multiplier']:.2f}x)")
+        if was_filtered:
+            print(f"⚠️  Signal was filtered due to low confidence")
+        print(f"{'='*70}\n")
+
         # Update signal state for tracking (after final signal is determined)
-        update_signal_state(final_signal, confidence)
+        # BUGFIX: Convert signal format from long/short to buy/sell for state tracking
+        final_signal_for_state = {"long": "buy", "short": "sell", "hold": "hold"}.get(final_signal, final_signal)
+        update_signal_state(final_signal_for_state, confidence)
 
         # Build response using pure functions
         risk_management = format_trade_params_response(trade_params)

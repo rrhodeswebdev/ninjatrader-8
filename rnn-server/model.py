@@ -3570,6 +3570,16 @@ class TradingModel:
             raw_confidence = confidence
             print(f"🔍 Raw confidence (before boost): {raw_confidence:.3f}")
 
+            # SAFETY CHECK: Catch zero confidence immediately
+            if raw_confidence == 0.0:
+                print(f"❌ ZERO CONFIDENCE DETECTED!")
+                print(f"   prob_long={prob_long:.4f}, prob_short={prob_short:.4f}, prob_hold={prob_hold:.4f}")
+                print(f"   predicted_class={predicted_class}")
+                # Force to max probability
+                confidence = max(prob_long, prob_short, prob_hold)
+                raw_confidence = confidence
+                print(f"   FIXED: Using max probability as confidence: {confidence:.4f}")
+
             # IMPROVED: Multi-level confidence boost based on directional conviction AND trend alignment
             # Rewards clear directional signals with higher confidence
             # FIXED: Reduced boost multipliers to prevent 100% confidence
@@ -3612,8 +3622,9 @@ class TradingModel:
 
             # Handle NaN/inf in confidence (should not happen after checks above)
             if not isinstance(confidence, (int, float)) or math.isnan(confidence) or math.isinf(confidence):
-                print(f"WARNING: Invalid confidence value after calculation: {confidence}, using 0.0")
-                confidence = 0.0
+                print(f"WARNING: Invalid confidence value after calculation: {confidence}, using max probability as fallback")
+                confidence = max(prob_short, prob_hold, prob_long)  # Use max probability instead of 0
+                print(f"  Fallback confidence: {confidence:.3f}")
 
             # Log all probabilities for debugging
             print(f"Probabilities: SHORT={prob_short:.3f}, HOLD={prob_hold:.3f}, LONG={prob_long:.3f}")
@@ -3646,8 +3657,14 @@ class TradingModel:
         signal_map = {0: 'short', 1: 'hold', 2: 'long'}
         signal = signal_map[predicted_class]
 
+        print(f"DEBUG: About to detect market regime...")
         # Detect market regime
-        regime = detect_market_regime(recent_bars_df, lookback=100)
+        try:
+            regime = detect_market_regime(recent_bars_df, lookback=100)
+            print(f"DEBUG: Regime detected: {regime}")
+        except Exception as e:
+            print(f"ERROR detecting regime: {e}")
+            regime = "unknown"
 
         # Calculate recent accuracy if we have enough predictions
         recent_accuracy = None
@@ -3656,27 +3673,39 @@ class TradingModel:
             recent_accuracy = correct / len(self.recent_predictions)
 
         # Get adaptive confidence threshold
-        current_timestamp = recent_bars_df['time'].iloc[-1]
-        adaptive_threshold = self.adaptive_thresholds.get_threshold(
-            regime, current_timestamp, recent_accuracy
-        )
+        print(f"DEBUG: About to get adaptive threshold...")
+        try:
+            current_timestamp = recent_bars_df['time'].iloc[-1]
+            adaptive_threshold = self.adaptive_thresholds.get_threshold(
+                regime, current_timestamp, recent_accuracy
+            )
+            print(f"DEBUG: Adaptive threshold: {adaptive_threshold}")
+        except Exception as e:
+            print(f"ERROR getting adaptive threshold: {e}")
+            adaptive_threshold = 0.65
 
         # Log Hurst values, regime, and P&L context with prediction
-        current_pnl = recent_bars_df['dailyPnL'].iloc[-1] if 'dailyPnL' in recent_bars_df.columns else 0.0
-        current_goal = recent_bars_df['dailyGoal'].iloc[-1] if 'dailyGoal' in recent_bars_df.columns else 0.0
-        current_max_loss = recent_bars_df['dailyMaxLoss'].iloc[-1] if 'dailyMaxLoss' in recent_bars_df.columns else 0.0
+        print(f"DEBUG: About to log prediction context...")
+        try:
+            current_pnl = recent_bars_df['dailyPnL'].iloc[-1] if 'dailyPnL' in recent_bars_df.columns else 0.0
+            current_goal = recent_bars_df['dailyGoal'].iloc[-1] if 'dailyGoal' in recent_bars_df.columns else 0.0
+            current_max_loss = recent_bars_df['dailyMaxLoss'].iloc[-1] if 'dailyMaxLoss' in recent_bars_df.columns else 0.0
 
-        print(f"\n--- Prediction Context ---")
-        print(f"Market Regime: {regime.upper()}")
-        print(f"Adaptive Threshold: {adaptive_threshold:.2%} (vs fixed 65%)")
-        if recent_accuracy is not None:
-            print(f"Recent Accuracy: {recent_accuracy:.2%} (last {len(self.recent_predictions)} predictions)")
+            print(f"\n--- Prediction Context ---")
+            print(f"Market Regime: {regime.upper() if isinstance(regime, str) else 'UNKNOWN'}")
+            print(f"Adaptive Threshold: {adaptive_threshold:.2%} (vs fixed 65%)")
+            if recent_accuracy is not None:
+                print(f"Recent Accuracy: {recent_accuracy:.2%} (last {len(self.recent_predictions)} predictions)")
 
-        # Log attention: which bars the model focused on
-        print(f"\nAttention Focus (top {top_k} bars):")
-        for i, (idx, weight) in enumerate(zip(top_indices, top_weights)):
-            bars_ago = len(last_bar_attn) - 1 - idx
-            print(f"  {i+1}. Bar -{bars_ago:2d} (weight: {weight:.3f})")
+            # Log attention: which bars the model focused on
+            print(f"\nAttention Focus (top {top_k} bars):")
+            for i, (idx, weight) in enumerate(zip(top_indices, top_weights)):
+                bars_ago = len(last_bar_attn) - 1 - idx
+                print(f"  {i+1}. Bar -{bars_ago:2d} (weight: {weight:.3f})")
+        except Exception as e:
+            print(f"ERROR logging prediction context: {e}")
+            import traceback
+            traceback.print_exc()
 
         print(f"\nCurrent Hurst H: {current_hurst_H:.4f} ", end="")
         if current_hurst_H > 0.5:

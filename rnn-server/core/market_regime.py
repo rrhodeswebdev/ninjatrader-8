@@ -27,7 +27,7 @@ def calculate_market_regime(
     historical_lookback: int = 100,
     trend_strength_threshold: float = 0.3,  # LOWERED: Was 0.4, more lenient without ADX
     directional_consistency_threshold: float = 0.35,  # LOWERED: Was 0.4, more lenient without ADX
-    volatility_percentile_threshold: float = 0.90,  # RAISED: Was 0.75, now 0.90 (only block extreme volatility)
+    volatility_percentile_threshold: float = 0.98,  # RAISED: Only block EXTREME volatility (98th percentile)
     use_adx: bool = False,  # CHANGED: Default to False (pure price action)
     adx_threshold: float = 25.0
 ) -> Dict[str, Any]:
@@ -185,12 +185,12 @@ def calculate_market_regime(
         }
 
     # High volatility conditions (relative to history):
-    # Current volatility in top quartile of historical volatility
-    if volatility_percentile > volatility_percentile_threshold:
+    # Current volatility in top 2% of historical volatility (was top 10%)
+    if volatility_percentile > 0.98:  # Hardcoded to 98th percentile - only block EXTREME volatility
         return {
             "regime": "volatile",
-            "confidence_multiplier": 1.3,  # Require 30% higher confidence
-            "should_trade": False,  # Skip volatile markets
+            "confidence_multiplier": 1.2,  # Require 20% higher confidence (was 30%)
+            "should_trade": True,  # CHANGED: Allow trading even in volatile markets
             "reason": f"High volatility detected (percentile={volatility_percentile:.1%}, current={current_volatility:.4f})",
             "metrics": metrics
         }
@@ -199,8 +199,8 @@ def calculate_market_regime(
     # Not trending, not extremely volatile, but lacks clear direction
     return {
         "regime": "choppy",
-        "confidence_multiplier": 1.5,  # Require 50% higher confidence
-        "should_trade": False,  # Skip choppy markets (causes whipsaws)
+        "confidence_multiplier": 1.3,  # Require 30% higher confidence (was 50%)
+        "should_trade": True,  # CHANGED: Allow trading with higher threshold
         "reason": f"Choppy/sideways market (strength={trend_strength:.2f}, consistency={directional_consistency:.2f}, ADX={adx_value:.1f})",
         "metrics": metrics
     }

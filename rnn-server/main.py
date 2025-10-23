@@ -176,6 +176,9 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
     else:
         # Realtime data handling
+        print(f"\n{'='*70}")
+        print(f"📥 RECEIVED REALTIME REQUEST")
+        print(f"{'='*70}")
         print(f"Data Type: REALTIME")
 
         # Build bar DataFrames
