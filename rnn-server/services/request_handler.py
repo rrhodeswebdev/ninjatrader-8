@@ -207,26 +207,57 @@ def handle_realtime_request(
                 "confidence": 0.0
             }
 
-        # Check multi-timeframe alignment FIRST (highest priority filter)
+        # Get trade parameters from model FIRST to know the signal direction
+        print(f"\n🤖 Getting model prediction to check trend alignment...")
+        trade_params = model.predict_with_risk_params(
+            current_data,
+            account_balance=account_balance
+        )
+
+        signal = trade_params['signal']
+        confidence = trade_params.get('confidence', 0.0)
+
+        print(f"   Model signal: {signal.upper()}, Confidence: {confidence:.2%}")
+
+        # Check multi-timeframe alignment AFTER getting model signal
         # This prevents counter-trend trades that have negative expected value
-        # Use model's historical 5m data (not just the new bar)
         secondary_data = model.historical_data_secondary if hasattr(model, 'historical_data_secondary') else None
 
         # Only run MTF filter if we have sufficient 5m data
         if secondary_data is not None and len(secondary_data) >= 50:
-            mtf_aligned, mtf_reasons = check_multi_timeframe_alignment(current_data, secondary_data)
+            # Calculate 5m trend
+            close_5m = secondary_data['close'].values
+            sma_20_5m = np.mean(close_5m[-20:])
+            sma_50_5m = np.mean(close_5m[-50:])
+
+            if sma_20_5m > sma_50_5m * 1.002:  # 0.2% threshold
+                trend_5m = "UP"
+            elif sma_20_5m < sma_50_5m * 0.998:
+                trend_5m = "DOWN"
+            else:
+                trend_5m = "NEUTRAL"
+
+            # Check alignment between model signal and 5m trend
+            mtf_aligned = True
+            mtf_reasons = []
+
+            if signal == "long" and trend_5m == "DOWN":
+                mtf_aligned = False
+                mtf_reasons.append(f"Counter-trend LONG: Model wants LONG but 5m trend is DOWN (SMA20={sma_20_5m:.2f} < SMA50={sma_50_5m:.2f})")
+            elif signal == "short" and trend_5m == "UP":
+                mtf_aligned = False
+                mtf_reasons.append(f"Counter-trend SHORT: Model wants SHORT but 5m trend is UP (SMA20={sma_20_5m:.2f} > SMA50={sma_50_5m:.2f})")
+            else:
+                mtf_reasons.append(f"Aligned: Model signal={signal.upper()}, 5m trend={trend_5m}")
+
             if mtf_aligned:
                 print(f"\n✅ MTF FILTER: Timeframes aligned - trade allowed")
-                print(f"   1m bars: {len(current_data)}, 5m bars: {len(secondary_data)}")
+                print(f"   Model: {signal.upper()}, 5m trend: {trend_5m}")
         else:
             # Not enough 5m data yet - allow trade but log warning
             mtf_aligned = True
             mtf_reasons = [f"Insufficient 5m data ({len(secondary_data) if secondary_data is not None else 0} bars) - MTF filter skipped"]
             print(f"⚠️  MTF FILTER: {mtf_reasons[0]}")
-
-        # TEMPORARY: Bypass MTF filter for testing
-        print(f"\n⚠️  MTF FILTER BYPASS: Forcing trades through for testing")
-        mtf_aligned = True
 
         if not mtf_aligned:
             print(f"\n🚫 MULTI-TIMEFRAME FILTER: Trade blocked")
@@ -278,26 +309,9 @@ def handle_realtime_request(
                 "data_type": request.get('type', 'unknown')
             }
 
-        # Get trade parameters from model
-        print(f"\n{'='*70}")
-        print(f"🤖 CALLING MODEL PREDICTION")
-        print(f"{'='*70}")
-        print(f"About to call model.predict_with_risk_params()")
-        print(f"Data shape: {current_data.shape if hasattr(current_data, 'shape') else len(current_data)} bars")
-        print(f"Account balance: ${account_balance:,.2f}")
-        print(f"{'='*70}\n")
-
-        trade_params = model.predict_with_risk_params(
-            current_data,
-            account_balance=account_balance
-        )
-
-        print(f"\n{'='*70}")
-        print(f"✅ MODEL PREDICTION RETURNED")
-        print(f"{'='*70}")
-
-        signal = trade_params['signal']
-        confidence = trade_params.get('confidence', 0.0)
+        # Model prediction was already called above for MTF check
+        # Use the existing trade_params, signal, and confidence
+        print(f"\n✅ Using model prediction from MTF check")
 
         # DIAGNOSTIC: Log raw prediction before any filtering
         print(f"\n{'='*70}")

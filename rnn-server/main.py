@@ -43,10 +43,10 @@ app = FastAPI()
 trading_model = TradingModel(sequence_length=15)
 
 # IMPROVED: Confidence threshold for predictions
-# LOWERED: Set to 0.25 for testing after pure price action migration
-# The model needs to be retrained, so we need a lower threshold initially
-# Increase gradually once model is trained and validated: 0.25 → 0.40 → 0.55 → 0.60
-MIN_CONFIDENCE_THRESHOLD = 0.25
+# INCREASED: Set to 0.55 for better quality signals and fewer false entries
+# Higher threshold = fewer but higher quality trades
+# Was 0.25 (testing), now 0.55 (production quality)
+MIN_CONFIDENCE_THRESHOLD = 0.55
 
 # Track training status
 training_status = {

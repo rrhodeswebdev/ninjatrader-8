@@ -171,49 +171,52 @@ class StopTargetCalculator:
 
     def __init__(
         self,
-        base_stop_atr_multiplier: float = 1.5,
-        base_target_atr_multiplier: float = 2.5
+        base_stop_atr_multiplier: float = 0.75,  # TIGHTENED from 1.5
+        base_target_atr_multiplier: float = 1.5   # TIGHTENED from 2.5
     ):
         self.base_stop_atr = base_stop_atr_multiplier
         self.base_target_atr = base_target_atr_multiplier
 
         # Regime-specific stop/target multipliers
-        # UPDATED: Increased target_atr to hold winning trades longer and capture more profit
+        # TIGHTENED: Reduced all multipliers for tighter risk management
+        # For ES futures with typical ATR of 10-15 points:
+        # Stop: 0.5-1.0 ATR = 5-15 points = $62.50-$187.50
+        # Target: 1.0-2.0 ATR = 10-30 points = $125-$375
         self.regime_params = {
             'trending_normal': {
-                'stop_atr': 1.5,
-                'target_atr': 4.0,  # INCREASED from 3.0 to 4.0
-                'risk_reward': 2.67  # INCREASED from 2.0 to 2.67
+                'stop_atr': 0.75,    # TIGHTENED from 1.5 (e.g., 7.5 points = $93.75)
+                'target_atr': 2.0,   # TIGHTENED from 4.0 (e.g., 20 points = $250)
+                'risk_reward': 2.67  # Maintains good R/R
             },
             'trending_high_vol': {
-                'stop_atr': 2.0,
-                'target_atr': 4.0,  # INCREASED from 2.5 to 4.0
-                'risk_reward': 2.0  # INCREASED from 1.25 to 2.0
+                'stop_atr': 1.0,     # TIGHTENED from 2.0 (wider for volatility)
+                'target_atr': 2.5,   # TIGHTENED from 4.0
+                'risk_reward': 2.5
             },
             'ranging_normal': {
-                'stop_atr': 1.0,
-                'target_atr': 2.5,  # INCREASED from 1.5 to 2.5
-                'risk_reward': 2.5  # INCREASED from 1.5 to 2.5
+                'stop_atr': 0.5,     # TIGHTENED from 1.0 (tight for ranging)
+                'target_atr': 1.5,   # TIGHTENED from 2.5
+                'risk_reward': 3.0   # Higher R/R compensates
             },
             'ranging_low_vol': {
-                'stop_atr': 0.8,
-                'target_atr': 2.0,  # INCREASED from 1.2 to 2.0
-                'risk_reward': 2.5  # INCREASED from 1.5 to 2.5
+                'stop_atr': 0.4,     # TIGHTENED from 0.8 (very tight for low vol)
+                'target_atr': 1.2,   # TIGHTENED from 2.0
+                'risk_reward': 3.0
             },
             'high_vol_chaos': {
-                'stop_atr': 2.5,
-                'target_atr': 3.0,  # INCREASED from 2.0 to 3.0
-                'risk_reward': 1.2  # INCREASED from 0.8 to 1.2
+                'stop_atr': 1.5,     # TIGHTENED from 2.5 (still wider for chaos)
+                'target_atr': 3.0,   # TIGHTENED from 3.0 (kept same)
+                'risk_reward': 2.0
             },
             'transitional': {
-                'stop_atr': 1.3,
-                'target_atr': 3.0,  # INCREASED from 2.0 to 3.0
-                'risk_reward': 2.3  # INCREASED from 1.5 to 2.3
+                'stop_atr': 0.6,     # TIGHTENED from 1.3
+                'target_atr': 1.8,   # TIGHTENED from 3.0
+                'risk_reward': 3.0
             },
             'unknown': {
-                'stop_atr': 1.5,
-                'target_atr': 3.5,  # INCREASED from 2.5 to 3.5
-                'risk_reward': 2.33  # INCREASED from 1.67 to 2.33
+                'stop_atr': 0.75,    # TIGHTENED from 1.5
+                'target_atr': 2.0,   # TIGHTENED from 3.5
+                'risk_reward': 2.67
             }
         }
 

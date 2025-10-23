@@ -3822,10 +3822,11 @@ class TradingModel:
                 'urgency': 'normal'
             }
 
-        # EXIT CONDITION 4: Momentum loss
-        # Check if recent bars show momentum reversal (last 5 bars)
-        # INCREASED from 3 to 5 bars to filter out normal market noise
-        if len(recent_bars_df) >= 5:
+        # EXIT CONDITION 4: Momentum loss (DISABLED to hold winners longer)
+        # This was exiting winners during normal pullbacks
+        # Let stop loss and take profit handle exits instead
+        # DISABLED: Removed momentum loss check to hold trending trades longer
+        if False:  # Disabled
             last_5_closes = recent_bars_df['close'].tail(5).values
             if current_position == 'long':
                 # Check for 5 consecutive lower closes
