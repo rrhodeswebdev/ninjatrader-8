@@ -2952,12 +2952,13 @@ class TradingModel:
                 batch_y = batch_y.to(self.device)
 
                 # PRIORITY 2: Extract trend features for TrendAwareTradingLoss
-                # Feature indices: hurst_H is at index 4 (after OHLC), hurst_emphasized is at index 99
-                # trend_strength_emphasized is at index 100
+                # UPDATED: Feature indices changed after indicator removal (105 → 87 features)
+                # Feature indices: hurst_H is at index 4 (after OHLC), hurst_emphasized is at index 82
+                # trend_strength_emphasized is at index 83
                 # We use the last position in each sequence as the current trend
                 batch_trend_features = torch.stack([
-                    batch_X[:, -1, 99],  # hurst_H_emphasized (already multiplied by 2, so divide)
-                    batch_X[:, -1, 100]  # trend_strength_emphasized
+                    batch_X[:, -1, 82],  # hurst_H_emphasized (already multiplied by 2, so divide)
+                    batch_X[:, -1, 83]   # trend_strength_emphasized
                 ], dim=1)
                 # Adjust hurst back to original scale (was multiplied by 2)
                 batch_trend_features[:, 0] = batch_trend_features[:, 0] / 2.0
