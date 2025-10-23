@@ -2,6 +2,7 @@
 
 from typing import List, Dict, Any, Optional
 import pandas as pd
+import numpy as np
 import math
 from datetime import datetime, timezone
 
@@ -34,22 +35,42 @@ def sanitize_float(value: float) -> float:
 def sanitize_dict_floats(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Recursively sanitize all float values in a dictionary.
+    Also converts numpy types to native Python types for JSON serialization.
 
     Args:
-        data: Dictionary potentially containing float values
+        data: Dictionary potentially containing float values or numpy types
 
     Returns:
-        New dictionary with sanitized floats
+        New dictionary with sanitized floats and Python native types
     """
     result = {}
     for key, value in data.items():
-        if isinstance(value, float):
+        # Handle numpy boolean (np.bool_ only, np.bool deprecated)
+        if isinstance(value, np.bool_):
+            result[key] = bool(value)
+        # Handle Python boolean (must check before numpy types as numpy can also match bool)
+        elif isinstance(value, bool):
+            result[key] = value
+        # Handle numpy integers
+        elif isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+            result[key] = int(value)
+        # Handle numpy floats
+        elif isinstance(value, (np.floating, np.float64, np.float32, np.float16)):
+            result[key] = sanitize_float(float(value))
+        # Handle Python floats
+        elif isinstance(value, float):
             result[key] = sanitize_float(value)
+        # Handle nested dictionaries
         elif isinstance(value, dict):
             result[key] = sanitize_dict_floats(value)
+        # Handle lists
         elif isinstance(value, list):
             result[key] = [
                 sanitize_dict_floats(item) if isinstance(item, dict)
+                else bool(item) if isinstance(item, np.bool_)
+                else item if isinstance(item, bool)
+                else int(item) if isinstance(item, (np.integer, np.int64, np.int32, np.int16, np.int8))
+                else sanitize_float(float(item)) if isinstance(item, (np.floating, np.float64, np.float32, np.float16))
                 else sanitize_float(item) if isinstance(item, float)
                 else item
                 for item in value

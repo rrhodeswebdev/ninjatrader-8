@@ -270,7 +270,20 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             print("="*50 + "\n")
 
         # Sanitize all floats before returning
-        return sanitize_dict_floats(response)
+        try:
+            sanitized = sanitize_dict_floats(response)
+            return sanitized
+        except Exception as e:
+            print(f"\n❌ ERROR SANITIZING RESPONSE: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return a basic error response
+            return {
+                "status": "error",
+                "signal": "hold",
+                "confidence": 0.0,
+                "message": f"Response serialization error: {e}"
+            }
 
 
 @app.get("/health-check")
