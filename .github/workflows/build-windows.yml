@@ -1,0 +1,60 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install uv
+        run: pip install uv
+      
+      - name: Install Node dependencies
+        working-directory: tauri-app
+        run: npm install
+      
+      - name: Generate icons
+        working-directory: tauri-app
+        run: npx @tauri-apps/cli icon
+      
+      - name: Build Tauri app
+        working-directory: tauri-app
+        run: npm run build
+      
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: rnn-server-windows-installer
+          path: tauri-app/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+      
+      - name: Upload portable executable (if exists)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rnn-server-windows-portable
+          path: tauri-app/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: ignore
+

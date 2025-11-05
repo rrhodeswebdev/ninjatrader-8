@@ -6,6 +6,7 @@ The original main.py is preserved as main_backup.py for reference.
 """
 
 from fastapi import FastAPI, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import pandas as pd
@@ -38,6 +39,15 @@ from services.request_handler import (
 )
 
 app = FastAPI()
+
+# Add CORS middleware to allow requests from Tauri desktop app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize model instance with IMPROVED settings
 trading_model = TradingModel(sequence_length=15)
@@ -289,6 +299,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 @app.get("/health-check")
 def health_check():
     """Health check endpoint"""
+    print(f"\n[HEALTH CHECK] Model is_trained: {trading_model.is_trained}")
     return {
         "status": "ok",
         "model_trained": trading_model.is_trained,

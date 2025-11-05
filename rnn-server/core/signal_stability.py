@@ -13,10 +13,10 @@ from dataclasses import dataclass
 @dataclass
 class SignalConfig:
     """Configuration for signal stability rules."""
-    min_bars_between_reversal: int = 5
-    min_bars_in_hold: int = 3
-    required_confidence_increase: float = 0.15
-    enable_stability_check: bool = True
+    min_bars_between_reversal: int = 2  # REDUCED: Was 5, now 2 bars (allow faster reversals)
+    min_bars_in_hold: int = 1  # REDUCED: Was 3, now 1 bar (allow faster re-entry)
+    required_confidence_increase: float = 0.05  # REDUCED: Was 0.15, now 0.05 (5% increase)
+    enable_stability_check: bool = True  # Set to False to disable completely
 
 
 class SignalState:

@@ -2129,9 +2129,14 @@ class TradingModel:
         print(f"Calibration: {'Enabled' if self.calibration else 'Disabled'}")
         self.model.to(self.device)
 
-        # Try to load existing model first
-        if self.model_path.exists():
-            self.load_model()
+        # DO NOT auto-load existing model - model should always start as untrained
+        # User must explicitly train the model after server starts
+        # if self.model_path.exists():
+        #     self.load_model()
+
+        print(f"\n⚠️  MODEL INITIALIZATION: is_trained = {self.is_trained}")
+        print(f"   Model file exists: {self.model_path.exists()}")
+        print(f"   Auto-load: DISABLED (model must be trained explicitly)\n")
 
         # PERFORMANCE OPTIMIZATION: torch.compile() disabled due to compatibility issues with LSTM
         # if hasattr(torch, 'compile') and not self.compiled:
