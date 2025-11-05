@@ -29,10 +29,7 @@
       "wix": {
         "language": "en-US"
       },
-      "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "license": null
-      }
+      "nsis": null
     }
   },
   "app": {
