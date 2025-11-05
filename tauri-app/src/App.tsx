@@ -159,7 +159,8 @@ function App() {
                 const contractsMatch = logLine.match(/Contracts:\s*(\d+)/);
                 if (contractsMatch) {
                     (window as any).__riskContracts = parseInt(
-                        contractsMatch[1]
+                        contractsMatch[1],
+                        10
                     );
                 }
             }
@@ -270,18 +271,6 @@ function App() {
             setLatestSignal(null);
         } catch (error) {
             addLog(`Failed to stop server: ${error}`, 'error');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const testServer = async () => {
-        setLoading(true);
-        try {
-            const result = await invoke<string>('test_server');
-            addLog(result, 'success');
-        } catch (error) {
-            addLog(`Server test failed: ${error}`, 'error');
         } finally {
             setLoading(false);
         }
