@@ -349,6 +349,14 @@ def handle_realtime_request(
         # Apply signal stability check to prevent over-trading
         # BUGFIX: Convert signal format from long/short to buy/sell for stability check
         signal_for_stability = {"long": "buy", "short": "sell", "hold": "hold"}.get(filtered_signal, filtered_signal)
+
+        # Get current signal state for debugging
+        signal_state = get_signal_state()
+        print(f"\n📊 SIGNAL STABILITY CHECK:")
+        print(f"   Current signal state: {signal_state.last_signal.upper()}")
+        print(f"   Bars since last change: {signal_state.bars_since_last_change}")
+        print(f"   New signal: {signal_for_stability.upper()}, Confidence: {confidence:.1%}")
+
         stability_allowed, stability_reason = check_signal_stability(
             signal_for_stability,
             confidence
@@ -358,9 +366,11 @@ def handle_realtime_request(
             # Override to hold if signal stability check fails
             filtered_signal = "hold"
             was_filtered = True
-            print(f"\n⚠️  SIGNAL STABILITY CHECK: {stability_reason}")
+            print(f"\n⚠️  SIGNAL BLOCKED: {stability_reason}")
             print(f"   Original signal: {signal.upper()}, Confidence: {confidence:.1%}")
             print(f"   Action: Forcing HOLD to prevent over-trading\n")
+        else:
+            print(f"✅ Signal allowed: {stability_reason}\n")
 
         # Get exit analysis
         exit_analysis = {'should_exit': False, 'reason': 'No position', 'urgency': 'none'}
