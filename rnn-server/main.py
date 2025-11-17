@@ -40,10 +40,10 @@ from services.request_handler import (
 
 app = FastAPI()
 
-# Add CORS middleware to allow requests from Tauri desktop app
+# Add CORS middleware to allow requests from local tools or future UIs
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:1420", "http://127.0.0.1:1420", "tauri://localhost"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
