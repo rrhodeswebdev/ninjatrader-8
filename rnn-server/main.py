@@ -1,10 +1,13 @@
 """
-FastAPI server for RNN-based trading predictions - FUNCTIONAL PROGRAMMING VERSION
+FastAPI server for RNN-based trading predictions.
 
-This is a refactored version of main.py using functional programming patterns.
-The original main.py is preserved as main_backup.py for reference.
+This server provides endpoints for:
+- Historical data ingestion and model training
+- Real-time trading signal predictions
+- Model health checks and status monitoring
 """
 
+import logging
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -38,9 +41,16 @@ from services.request_handler import (
     handle_realtime_request,
 )
 
-app = FastAPI()
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-# Add CORS middleware to allow requests from local tools or future UIs
+app = FastAPI(title="RNN Trading Server", version="2.0")
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,14 +59,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize model instance with IMPROVED settings
+logger.info("="*70)
+logger.info("🚀 INITIALIZING RNN TRADING SERVER")
+logger.info("="*70)
+
+# Initialize trading model
 trading_model = TradingModel(sequence_length=15)
 
-# IMPROVED: Confidence threshold for predictions
-# INCREASED: Set to 0.55 for better quality signals and fewer false entries
-# Higher threshold = fewer but higher quality trades
-# Was 0.25 (testing), now 0.55 (production quality)
+# Confidence threshold for signal filtering
 MIN_CONFIDENCE_THRESHOLD = 0.55
+logger.info(f"🎯 Minimum confidence threshold: {MIN_CONFIDENCE_THRESHOLD}")
 
 # Track training status
 training_status = {
@@ -64,6 +76,10 @@ training_status = {
     "progress": "",
     "error": None
 }
+
+logger.info("="*70)
+logger.info("✅ SERVER INITIALIZATION COMPLETE")
+logger.info("="*70)
 
 # Define request models
 class BarData(BaseModel):
@@ -103,10 +119,16 @@ class RealtimeRequest(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World", "version": "functional"}
+    """Root endpoint - server info."""
+    return {
+        "service": "RNN Trading Server",
+        "version": "2.0",
+        "status": "running",
+        "model_trained": trading_model.is_trained
+    }
 
 def train_model_background(df: pd.DataFrame):
-    """Background task for training the model (kept as-is for compatibility)"""
+    """Background task for model training."""
     global training_status
 
     try:
@@ -114,62 +136,60 @@ def train_model_background(df: pd.DataFrame):
         training_status["progress"] = "Training started..."
         training_status["error"] = None
 
-        print("\n" + "="*70)
-        print("BACKGROUND TRAINING STARTED")
-        print("="*70)
+        logger.info("="*70)
+        logger.info("🎓 BACKGROUND TRAINING STARTED")
+        logger.info("="*70)
+        logger.info(f"📊 Training data: {len(df)} bars")
 
         trading_model.train(df, epochs=100, batch_size=32)
 
-        print("\n" + "="*70)
-        print("SAVING TRAINED MODEL")
-        print("="*70)
+        logger.info("="*70)
+        logger.info("💾 SAVING TRAINED MODEL")
+        logger.info("="*70)
         trading_model.save_model()
-
-        print(f"Model is_trained status: {trading_model.is_trained}")
 
         training_status["is_training"] = False
         training_status["progress"] = "Training complete - model saved"
 
-        print("\n" + "="*70)
-        print("✅ BACKGROUND TRAINING COMPLETE")
-        print(f"   Model trained: {trading_model.is_trained}")
-        print(f"   Model saved: models/trading_model.pth")
-        print("   Ready for predictions!")
-        print("="*70 + "\n")
+        logger.info("="*70)
+        logger.info("✅ BACKGROUND TRAINING COMPLETE")
+        logger.info(f"   Model trained: {trading_model.is_trained}")
+        logger.info(f"   Model saved: models/trading_model.pth")
+        logger.info("   Ready for predictions!")
+        logger.info("="*70)
 
     except Exception as e:
         training_status["is_training"] = False
         training_status["error"] = str(e)
         training_status["progress"] = f"Training failed: {e}"
-        print(f"\n❌ Training error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Training error: {e}", exc_info=True)
 
 
 @app.post("/analysis")
 async def analysis(request: dict, background_tasks: BackgroundTasks):
     """
-    Refactored analysis endpoint using functional programming patterns.
+    Main analysis endpoint for historical data and real-time predictions.
 
-    Uses pure functions from core/ and services/ modules for:
-    - Validation
-    - Data transformation
-    - Request handling
+    Handles two request types:
+    - Historical: Ingests data and schedules model training
+    - Realtime: Generates trading signals from current market data
     """
-    print("\n" + "="*50)
-    print("RECEIVED DATA AT /analysis (FUNCTIONAL VERSION)")
-    print("="*50)
+    logger.info("="*70)
+    logger.info("📥 RECEIVED REQUEST AT /analysis")
+    logger.info("="*70)
 
-    # Determine request type using pure function
+    # Determine request type
     request_type = extract_request_type(request)
 
     if request_type == "historical":
-        # Extract bars using pure function
+        # Extract and process historical data
         bars_primary, bars_secondary = extract_bars_from_request(request)
 
-        print(f"Data Type: HISTORICAL ({len(bars_primary)} primary bars, {len(bars_secondary)} secondary bars)")
+        logger.info(f"📊 Request Type: HISTORICAL")
+        logger.info(f"   Primary bars: {len(bars_primary)}")
+        logger.info(f"   Secondary bars: {len(bars_secondary)}")
 
-        # Use functional request handler
+        # Handle historical data ingestion
         response = handle_historical_request(
             bars_primary=bars_primary,
             bars_secondary=bars_secondary,
@@ -178,18 +198,14 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             schedule_training_fn=lambda df: background_tasks.add_task(train_model_background, df)
         )
 
-        print("="*50)
-        print(f"Response Status: {response.get('status')}")
-        print("="*50 + "\n")
+        logger.info(f"✅ Response Status: {response.get('status')}")
+        logger.info("="*70)
 
         return response
 
     else:
-        # Realtime data handling
-        print(f"\n{'='*70}")
-        print(f"📥 RECEIVED REALTIME REQUEST")
-        print(f"{'='*70}")
-        print(f"Data Type: REALTIME")
+        # Realtime prediction request
+        logger.info(f"🔮 Request Type: REALTIME PREDICTION")
 
         # Build bar DataFrames
         if 'primary_bar' in request and request['primary_bar']:
@@ -241,11 +257,9 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             new_bar['time'] = pd.to_datetime(new_bar['time'])
             new_bar_secondary = None
 
-        print("\nNew Bar Data:")
-        print(new_bar.to_string(index=False))
+        logger.debug(f"📊 New Bar Data:\n{new_bar.to_string(index=False)}")
         if new_bar_secondary is not None:
-            print("\nSecondary Bar Data:")
-            print(new_bar_secondary.to_string(index=False))
+            logger.debug(f"📊 Secondary Bar Data:\n{new_bar_secondary.to_string(index=False)}")
 
         # Use functional request handler for prediction
         response = handle_realtime_request(
@@ -259,35 +273,32 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
         # Log prediction results
         if response.get('status') == 'ok':
-            print("\n" + "="*50)
-            print("PREDICTION WITH RISK PARAMETERS")
-            print("="*50)
-            print(f"Signal: {response['signal'].upper()}")
-            print(f"Confidence: {response['confidence']:.4f} ({response['confidence']*100:.2f}%)")
+            logger.info("="*70)
+            logger.info("🎯 PREDICTION RESULT")
+            logger.info("="*70)
+            logger.info(f"📊 Signal: {response['signal'].upper()}")
+            logger.info(f"📈 Confidence: {response['confidence']:.4f} ({response['confidence']*100:.2f}%)")
 
             if response.get('filtered'):
-                print(f"(Filtered from {response['raw_signal'].upper()})")
+                logger.info(f"🔄 Filtered from: {response['raw_signal'].upper()}")
 
             risk = response.get('risk_management', {})
             if risk.get('contracts', 0) > 0:
-                print(f"\n📊 RISK MANAGEMENT PARAMETERS:")
-                print(f"  Contracts: {risk['contracts']}")
-                print(f"  Entry Price: ${risk['entry_price']:.2f}")
-                print(f"  Stop Loss: ${risk['stop_loss']:.2f}")
-                print(f"  Take Profit: ${risk['take_profit']:.2f}")
-                print(f"  Risk/Reward: {risk.get('risk_reward_ratio', 0):.2f}")
+                logger.info("💰 RISK MANAGEMENT:")
+                logger.info(f"   Contracts: {risk['contracts']}")
+                logger.info(f"   Entry: ${risk['entry_price']:.2f}")
+                logger.info(f"   Stop Loss: ${risk['stop_loss']:.2f}")
+                logger.info(f"   Take Profit: ${risk['take_profit']:.2f}")
+                logger.info(f"   Risk/Reward: {risk.get('risk_reward_ratio', 0):.2f}")
 
-            print("="*50 + "\n")
+            logger.info("="*70)
 
         # Sanitize all floats before returning
         try:
             sanitized = sanitize_dict_floats(response)
             return sanitized
         except Exception as e:
-            print(f"\n❌ ERROR SANITIZING RESPONSE: {e}")
-            import traceback
-            traceback.print_exc()
-            # Return a basic error response
+            logger.error(f"❌ ERROR SANITIZING RESPONSE: {e}", exc_info=True)
             return {
                 "status": "error",
                 "signal": "hold",
@@ -298,40 +309,49 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
 @app.get("/health-check")
 def health_check():
-    """Health check endpoint"""
-    print(f"\n[HEALTH CHECK] Model is_trained: {trading_model.is_trained}")
+    """Health check endpoint - returns server and model status."""
+    logger.info(f"🏥 Health check - Model trained: {trading_model.is_trained}")
     return {
         "status": "ok",
         "model_trained": trading_model.is_trained,
         "device": str(trading_model.device),
-        "version": "functional"
+        "version": "2.0",
+        "sequence_length": trading_model.sequence_length,
+        "min_confidence": MIN_CONFIDENCE_THRESHOLD
     }
 
 
 @app.get("/training-status")
 def get_training_status():
-    """Get current training status"""
+    """Get current training status and progress."""
     return training_status
 
 
 @app.post("/save-model")
 def save_model():
-    """Manually save the model"""
+    """Manually save the trained model to disk."""
     try:
+        logger.info("💾 Saving model...")
         trading_model.save_model()
+        logger.info("✅ Model saved successfully")
         return {"status": "ok", "message": "Model saved successfully"}
     except Exception as e:
+        logger.error(f"❌ Error saving model: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
 
 @app.post("/load-model")
 def load_model():
-    """Manually load the model"""
+    """Manually load a trained model from disk."""
     try:
+        logger.info("📂 Loading model...")
         success = trading_model.load_model()
         if success:
+            logger.info("✅ Model loaded successfully")
             return {"status": "ok", "message": "Model loaded successfully"}
         else:
+            logger.warning("⚠️  Model file not found")
             return {"status": "error", "message": "Model not found"}
     except Exception as e:
+        logger.error(f"❌ Error loading model: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}

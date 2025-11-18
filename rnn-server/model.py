@@ -9,120 +9,50 @@ import pandas as pd
 from pathlib import Path
 import json
 import math
+import logging
 from hurst import compute_Hc
 from scipy import stats
 import time
 from functools import wraps
 from trading_metrics import evaluate_trading_performance, calculate_sharpe_ratio
+from core.indicators import calculate_adx, calculate_atr, calculate_rsi, augment_time_series
 
-# ROUND 2 IMPROVEMENTS: Import advanced modules
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Import advanced modules (optional)
 try:
     from advanced_loss_functions import CombinedTradingLoss, LabelSmoothingCrossEntropy
     from improved_label_generation import calculate_triple_barrier_labels, calculate_regime_adaptive_labels
     from confidence_calibration_advanced import EnsembleCalibration, TemperatureScaling
     ADVANCED_MODULES_AVAILABLE = True
+    logger.info("✅ Advanced modules loaded successfully")
 except ImportError as e:
-    print(f"⚠️  Advanced modules not available: {e}")
-    print("   Run with standard functionality. Install advanced modules for improvements.")
     ADVANCED_MODULES_AVAILABLE = False
+    logger.warning(f"⚠️  Advanced modules not available: {e}")
+    logger.info("   Running with standard functionality")
 
-# PERFORMANCE OPTIMIZATION: Add timing decorator
+# Performance timing decorator
 def timing_decorator(func):
+    """Decorator to measure and log function execution time."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         start = time.perf_counter()
         result = func(*args, **kwargs)
         elapsed = time.perf_counter() - start
         if elapsed > 0.01:  # Only log if > 10ms
-            print(f"⚡ {func.__name__}: {elapsed*1000:.2f}ms")
+            logger.debug(f"⚡ {func.__name__}: {elapsed*1000:.2f}ms")
         return result
     return wrapper
 
 
-def augment_time_series(X_sequence, augmentation_prob=0.3):
-    """
-    Data augmentation for time series trading data
-    Applied during training to reduce overfitting
-
-    Augmentation types:
-    - Jitter: Add small random noise
-    - Scale: Scale magnitude slightly
-    - Magnitude warp: Warp magnitude of random features
-    """
-    if np.random.random() > augmentation_prob:
-        return X_sequence
-
-    aug_type = np.random.choice(['jitter', 'scale', 'magnitude_warp'])
-
-    if aug_type == 'jitter':
-        # Add small random noise (0.5% of std)
-        noise = np.random.normal(0, 0.005, X_sequence.shape)
-        return X_sequence + noise
-
-    elif aug_type == 'scale':
-        # Scale magnitude slightly (95-105%)
-        scale = np.random.uniform(0.98, 1.02)
-        return X_sequence * scale
-
-    elif aug_type == 'magnitude_warp':
-        # Warp magnitude of random features (10-20% of features)
-        n_features = X_sequence.shape[1]
-        n_warp = max(1, n_features // 10)
-        warp_features = np.random.choice(n_features, size=n_warp, replace=False)
-        warped = X_sequence.copy()
-        warped[:, warp_features] *= np.random.uniform(0.95, 1.05, size=(warped.shape[0], n_warp))
-        return warped
-
-    return X_sequence
-
 # ============================================================================
-# INDICATOR FUNCTIONS - COMMENTED OUT FOR PURE PRICE ACTION MIGRATION
-# These lagging indicators are being replaced with pure price action features
-# See: core/price_action_features.py and PRICE_ACTION_MIGRATION_SUMMARY.md
+# MARKET REGIME AND TREND DETECTION
 # ============================================================================
-
-# def calculate_adx(high, low, close, period=14):
-#     """
-#     Calculate Average Directional Index (ADX) for trend strength detection
-#     ADX > 25: Strong trend
-#     ADX < 20: Ranging/weak trend
-#     """
-#     n = len(high)
-#     if n < period + 1:
-#         return np.zeros(n)
-#
-#     # Calculate +DM and -DM
-#     plus_dm = np.zeros(n)
-#     minus_dm = np.zeros(n)
-#
-#     for i in range(1, n):
-#         high_diff = high[i] - high[i-1]
-#         low_diff = low[i-1] - low[i]
-#
-#         if high_diff > low_diff and high_diff > 0:
-#             plus_dm[i] = high_diff
-#         if low_diff > high_diff and low_diff > 0:
-#             minus_dm[i] = low_diff
-#
-#     # Calculate True Range
-#     tr = np.zeros(n)
-#     for i in range(1, n):
-#         tr[i] = max(high[i] - low[i],
-#                    abs(high[i] - close[i-1]),
-#                    abs(low[i] - close[i-1]))
-#
-#     # Smooth with EMA
-#     import pandas as pd
-#     plus_di = pd.Series(plus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
-#     minus_di = pd.Series(minus_dm).ewm(span=period, adjust=False).mean() / pd.Series(tr).ewm(span=period, adjust=False).mean() * 100
-#
-#     # Calculate DX
-#     dx = np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-8) * 100
-#
-#     # ADX is smoothed DX
-#     adx = pd.Series(dx).ewm(span=period, adjust=False).mean().values
-#
-#     return adx
 
 
 def detect_market_regime(df, lookback=100):
@@ -237,234 +167,38 @@ def calculate_trend_alignment_feature(df, lookback=50):
 
 def calculate_hurst_exponent(prices, min_window=10):
     """
-    Calculate Hurst exponent for time series using the Mottl/hurst library
+    Calculate Hurst exponent for time series.
+
     H < 0.5: Mean reverting (anti-persistent)
     H = 0.5: Random walk (Brownian motion)
     H > 0.5: Trending (persistent)
 
-    Returns both H and C (Hurst exponent and constant from fit)
+    Args:
+        prices: Price array
+        min_window: Minimum window size for calculation
+
+    Returns:
+        Tuple of (H, c) - Hurst exponent and constant from fit
     """
     if len(prices) < min_window:
         return 0.5, 1.0  # Default to random walk if insufficient data
 
     try:
-        # compute_Hc returns (H, c, data) where:
-        # H = Hurst exponent
-        # c = Constant from the fit
-        # data = (x, y) values used for fitting
         H, c, _ = compute_Hc(prices, kind='price', simplified=True)
-
-        # Clamp H between 0 and 1 for safety
-        H = max(0.0, min(1.0, H))
-
+        H = max(0.0, min(1.0, H))  # Clamp between 0 and 1
         return H, c
     except Exception as e:
-        # Fallback to default if computation fails
-        print(f"Warning: Hurst calculation failed: {e}")
+        logger.warning(f"Hurst calculation failed: {e}")
         return 0.5, 1.0
 
 
-# def calculate_atr(high, low, close, period=14):
-#     """
-#     Calculate Average True Range (VECTORIZED VERSION)
-#     Measures market volatility
-#     """
-#     n = len(high)
-#     if n < period + 1:
-#         return np.zeros(n)
-#
-#     # PERFORMANCE OPTIMIZATION: Vectorized True Range calculation
-#     hl = high[1:] - low[1:]
-#     hc = np.abs(high[1:] - close[:-1])
-#     lc = np.abs(low[1:] - close[:-1])
-#     tr = np.maximum(np.maximum(hl, hc), lc)
-#
-#     # PERFORMANCE OPTIMIZATION: Use pandas rolling mean (faster than loop)
-#     import pandas as pd
-#     tr_series = pd.Series(tr)
-#     atr_values = tr_series.rolling(window=period, min_periods=1).mean().values
-#
-#     # Add zero for first value (no previous close) - ensure correct length
-#     atr = np.zeros(n)
-#     atr[1:] = atr_values
-#
-#     return atr
-
-
-# def calculate_rsi(close, period=14):
-#     """
-#     Calculate Relative Strength Index (RSI)
-#     RSI > 70: Overbought
-#     RSI < 30: Oversold
-#     """
-#     n = len(close)
-#     if n < period + 1:
-#         return np.zeros(n)
-#
-#     # Calculate price changes
-#     delta = np.diff(close)
-#
-#     # Separate gains and losses
-#     gain = np.where(delta > 0, delta, 0)
-#     loss = np.where(delta < 0, -delta, 0)
-#
-#     # Calculate average gain and loss using EMA
-#     import pandas as pd
-#     avg_gain = pd.Series(gain).ewm(span=period, adjust=False).mean().values
-#     avg_loss = pd.Series(loss).ewm(span=period, adjust=False).mean().values
-#
-#     # Calculate RS and RSI
-#     rs = avg_gain / (avg_loss + 1e-8)
-#     rsi = 100 - (100 / (1 + rs))
-#
-#     # Add zero for first value (no previous close)
-#     rsi_full = np.zeros(n)
-#     rsi_full[1:] = rsi
-#
-#     return rsi_full
-
-
-# def calculate_rsi_divergence(close, rsi, lookback=10):
-#     """
-#     Detect RSI divergence (price vs RSI direction mismatch) - VECTORIZED VERSION
-#     +1: Bullish divergence (price down, RSI up)
-#     -1: Bearish divergence (price up, RSI down)
-#     0: No divergence
-#
-#     PERFORMANCE OPTIMIZATION: Fully vectorized for ~10x speedup
-#     """
-#     n = len(close)
-#     divergence = np.zeros(n)
-#
-#     # PERFORMANCE OPTIMIZATION: Vectorized sliding window calculation
-#     price_changes = close[lookback:] - close[:-lookback]
-#     rsi_changes = rsi[lookback:] - rsi[:-lookback]
-#
-#     # Vectorized divergence detection
-#     # Bullish divergence: price_change < 0 and rsi_change > 0
-#     # Bearish divergence: price_change > 0 and rsi_change < 0
-#     divergence[lookback:] = np.where(
-#         (price_changes < 0) & (rsi_changes > 0), 1,
-#         np.where((price_changes > 0) & (rsi_changes < 0), -1, 0)
-#     )
-#
-#     return divergence
-
-
-# def calculate_macd(close, fast=12, slow=26, signal=9):
-#     """
-#     Calculate MACD (Moving Average Convergence Divergence)
-#     Returns: macd_line, signal_line, histogram
-#     """
-#     n = len(close)
-#     if n < slow:
-#         return np.zeros(n), np.zeros(n), np.zeros(n)
-#
-#     import pandas as pd
-#     close_series = pd.Series(close)
-#
-#     # Calculate EMAs
-#     ema_fast = close_series.ewm(span=fast, adjust=False).mean().values
-#     ema_slow = close_series.ewm(span=fast, adjust=False).mean().values
-#
-#     # MACD line
-#     macd_line = ema_fast - ema_slow
-#
-#     # Signal line (EMA of MACD)
-#     macd_series = pd.Series(macd_line)
-#     signal_line = macd_series.ewm(span=signal, adjust=False).mean().values
-#
-#     # Histogram (difference)
-#     histogram = macd_line - signal_line
-#
-#     return macd_line, signal_line, histogram
-
-
-# def calculate_vwma_deviation(close, volume, period=20):
-#     """
-#     Calculate Volume-Weighted Moving Average deviation
-#     Better than SMA for futures markets with volume information
-#     """
-#     n = len(close)
-#     if n < period:
-#         return np.zeros(n)
-#
-#     import pandas as pd
-#     close_series = pd.Series(close)
-#     volume_series = pd.Series(volume)
-#
-#     # Volume-weighted MA
-#     vwma = (close_series * volume_series).rolling(period).sum() / volume_series.rolling(period).sum()
-#     vwma = vwma.bfill().values  # Fixed: Use bfill() instead of deprecated fillna(method='bfill')
-#
-#     # Deviation as percentage
-#     deviation = (close - vwma) / (vwma + 1e-8)
-#
-#     return deviation
-
-
-# def calculate_garman_klass_volatility(open_prices, high, low, close, period=20):
-#     """
-#     Calculate Garman-Klass volatility estimator
-#     More efficient than Parkinson volatility
-#     """
-#     n = len(close)
-#     if n < 2:
-#         return np.zeros(n)
-#
-#     # Garman-Klass formula
-#     hl = np.log(high / (low + 1e-8)) ** 2
-#     co = np.log(close / (open_prices + 1e-8)) ** 2
-#     gk_vol = 0.5 * hl - (2 * np.log(2) - 1) * co
-#
-#     # Rolling average
-#     import pandas as pd
-#     gk_vol_series = pd.Series(gk_vol)
-#     gk_vol_smooth = gk_vol_series.rolling(period, min_periods=1).mean().values
-#
-#     return gk_vol_smooth
-
-
-# def calculate_price_impact(close, volume):
-#     """
-#     Calculate price impact per unit volume
-#     Measures market liquidity and institutional activity
-#     """
-#     n = len(close)
-#
-#     # Price impact = abs(price change) / volume
-#     price_change = np.abs(np.diff(close))
-#     price_impact = np.zeros(n)
-#     price_impact[1:] = price_change / (volume[1:] + 1)
-#
-#     return price_impact
-
-
-# def calculate_volume_weighted_price_change(close, volume, period=5):
-#     """
-#     Volume-weighted price change
-#     Emphasizes price moves with high volume
-#     """
-#     n = len(close)
-#     vwpc = np.zeros(n)
-#
-#     import pandas as pd
-#     close_series = pd.Series(close)
-#     volume_series = pd.Series(volume)
-#
-#     price_change = close_series.diff()
-#     avg_volume = volume_series.rolling(period, min_periods=1).mean()
-#
-#     vwpc_values = (price_change * volume_series) / (avg_volume + 1)
-#     vwpc = vwpc_values.fillna(0).values
-#
-#     return vwpc
-
-
+@timing_decorator
 def align_secondary_to_primary(df_primary, df_secondary):
     """
-    Align secondary timeframe data to primary timeframe
-    For each primary bar, find the corresponding secondary bar value
+    Align secondary timeframe data to primary timeframe.
+
+    For each primary bar, finds the corresponding secondary bar value
+    and calculates multi-timeframe features.
 
     Args:
         df_primary: Primary timeframe dataframe (e.g., 1-min)
@@ -473,37 +207,25 @@ def align_secondary_to_primary(df_primary, df_secondary):
     Returns:
         Dictionary with secondary features aligned to primary timeframe
     """
-    if df_secondary is None:
-        # Return zeros if no secondary data
-        n_bars = len(df_primary)
-        return {
-            'tf2_close': np.zeros(n_bars),
-            'tf2_close_change': np.zeros(n_bars),
-            'tf2_high_low_range': np.zeros(n_bars),
-            'tf2_volume': np.zeros(n_bars),
-            'tf2_position_in_bar': np.zeros(n_bars),
-            'tf2_trend_direction': np.zeros(n_bars),
-            'tf2_momentum': np.zeros(n_bars),
-            'tf2_volatility': np.zeros(n_bars),
-            'tf2_alignment_score': np.zeros(n_bars),
-            'tf2_delta': np.zeros(n_bars)
-        }
+    n_bars = len(df_primary)
 
-    if len(df_secondary) == 0:
-        # Return zeros if empty secondary data
-        n_bars = len(df_primary)
-        return {
-            'tf2_close': np.zeros(n_bars),
-            'tf2_close_change': np.zeros(n_bars),
-            'tf2_high_low_range': np.zeros(n_bars),
-            'tf2_volume': np.zeros(n_bars),
-            'tf2_position_in_bar': np.zeros(n_bars),
-            'tf2_trend_direction': np.zeros(n_bars),
-            'tf2_momentum': np.zeros(n_bars),
-            'tf2_volatility': np.zeros(n_bars),
-            'tf2_alignment_score': np.zeros(n_bars),
-            'tf2_delta': np.zeros(n_bars)
-        }
+    # Default zero features template
+    zero_features = {
+        'tf2_close': np.zeros(n_bars),
+        'tf2_close_change': np.zeros(n_bars),
+        'tf2_high_low_range': np.zeros(n_bars),
+        'tf2_volume': np.zeros(n_bars),
+        'tf2_position_in_bar': np.zeros(n_bars),
+        'tf2_trend_direction': np.zeros(n_bars),
+        'tf2_momentum': np.zeros(n_bars),
+        'tf2_volatility': np.zeros(n_bars),
+        'tf2_alignment_score': np.zeros(n_bars),
+        'tf2_delta': np.zeros(n_bars)
+    }
+
+    if df_secondary is None or len(df_secondary) == 0:
+        logger.debug(f"No secondary timeframe data - returning zero features for {n_bars} bars")
+        return zero_features
 
     n_bars = len(df_primary)
     aligned_features = {
@@ -2091,25 +1813,42 @@ class TradingModel:
     Wrapper class for training and prediction with state management
     """
     def __init__(self, sequence_length=15, model_path='models/trading_model.pth'):
-        # PHASE 2 UPDATE: Changed input_size from 105 → 87 (removed 18 indicator features)
-        # Pure price action features only (no ATR, RSI, MACD, etc.)
-        # sequence_length=15, num_layers=2 for better generalization
-        self.model = ImprovedTradingRNN(input_size=87, hidden_size=128, num_layers=2, output_size=3)
-        self.scaler = StandardScaler()
+        """
+        Initialize TradingModel with improved logging.
+
+        Args:
+            sequence_length: Number of bars in sequence for LSTM
+            model_path: Path to save/load model weights
+        """
+        logger.info("="*70)
+        logger.info("INITIALIZING TRADING MODEL")
+        logger.info("="*70)
+
+        # Model configuration
         self.sequence_length = sequence_length
-        self.is_trained = False
         self.model_path = Path(model_path)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.compiled = False  # Track compilation state
+        self.is_trained = False
+        self.compiled = False
+
+        # Initialize model (87 features: pure price action)
+        self.model = ImprovedTradingRNN(input_size=87, hidden_size=128, num_layers=2, output_size=3)
+        self.scaler = StandardScaler()
+        self.model.to(self.device)
+
+        logger.info(f"📊 Device: {self.device}")
+        logger.info(f"🧠 Model: ImprovedTradingRNN ({self.model.count_parameters():,} parameters)")
+        logger.info(f"📏 Sequence length: {self.sequence_length}")
+        logger.info(f"🎯 Input features: 87 (pure price action)")
 
         # Adaptive confidence thresholds
         self.adaptive_thresholds = AdaptiveConfidenceThresholds()
 
-        # Track recent predictions for accuracy calculation
+        # Track recent predictions
         self.recent_predictions = []
         self.max_recent_predictions = 50
 
-        # ROUND 2 IMPROVEMENT: Confidence calibration support
+        # Confidence calibration (optional advanced feature)
         self.calibration = None
         if ADVANCED_MODULES_AVAILABLE:
             try:
@@ -2117,51 +1856,34 @@ class TradingModel:
                 calib_path = Path('models/calibration')
                 if calib_path.exists():
                     self.calibration.load(str(calib_path))
-                    print("✓ Loaded confidence calibration")
+                    logger.info("✅ Loaded confidence calibration")
             except Exception as e:
-                print(f"⚠️  Could not load calibration: {e}")
+                logger.warning(f"⚠️  Could not load calibration: {e}")
                 self.calibration = None
 
-        print(f"Using device: {self.device}")
-        print(f"Model: ImprovedTradingRNN with {self.model.count_parameters():,} parameters")
-        print(f"Sequence length: {self.sequence_length}")
-        print(f"Input features: 105 (including 6 trend boost features)")
-        print(f"Calibration: {'Enabled' if self.calibration else 'Disabled'}")
-        self.model.to(self.device)
+        logger.info(f"🎚️  Calibration: {'Enabled' if self.calibration else 'Disabled'}")
 
-        # DO NOT auto-load existing model - model should always start as untrained
-        # User must explicitly train the model after server starts
-        # if self.model_path.exists():
-        #     self.load_model()
+        # Model loading policy
+        logger.info(f"💾 Model file: {self.model_path}")
+        logger.info(f"📁 File exists: {self.model_path.exists()}")
+        logger.info(f"⚠️  Auto-load: DISABLED (model must be trained explicitly)")
+        logger.info(f"🔴 is_trained: {self.is_trained}")
 
-        print(f"\n⚠️  MODEL INITIALIZATION: is_trained = {self.is_trained}")
-        print(f"   Model file exists: {self.model_path.exists()}")
-        print(f"   Auto-load: DISABLED (model must be trained explicitly)\n")
-
-        # PERFORMANCE OPTIMIZATION: torch.compile() disabled due to compatibility issues with LSTM
-        # if hasattr(torch, 'compile') and not self.compiled:
-        #     try:
-        #         print("Compiling model with torch.compile()...")
-        #         self.model = torch.compile(self.model, mode='reduce-overhead')
-        #         self.compiled = True
-        #         print("✓ Model compiled successfully (expect 10-20% speedup)")
-        #     except Exception as e:
-        #         print(f"⚠️  torch.compile() failed: {e}")
-        #         print("   Continuing with uncompiled model...")
-
-        # Historical data storage (multi-timeframe support)
+        # Historical data storage (multi-timeframe)
         self.historical_data = None
-        self.historical_data_secondary = None  # Secondary timeframe (e.g., 5-min)
+        self.historical_data_secondary = None
 
-        # PERFORMANCE OPTIMIZATION: Cache computed features to avoid recomputation
+        # Performance caches
         self._feature_cache = None
         self._feature_cache_key = None
         self._cache_length = 0
-
-        # PERFORMANCE OPTIMIZATION: Hurst calculation cache
         self._hurst_cache = []
         self._last_hurst_H = 0.5
         self._last_hurst_C = 1.0
+
+        logger.info("="*70)
+        logger.info("✅ TRADING MODEL INITIALIZED")
+        logger.info("="*70)
 
     def _validate_data(self, df):
         """Validate input data for NaN, inf, and required columns"""
@@ -3458,27 +3180,32 @@ class TradingModel:
     @timing_decorator
     def predict(self, recent_bars_df):
         """
-        Predict trade signal for new bar (OPTIMIZED VERSION with fast path)
-        Returns: (signal, confidence)
-            signal: 'long', 'short', or 'hold'
-            confidence: float between 0 and 1
+        Predict trade signal for new bar with optimized fast path.
+
+        Args:
+            recent_bars_df: DataFrame with recent bar data
+
+        Returns:
+            Tuple of (signal, confidence)
+            - signal: 'long', 'short', or 'hold'
+            - confidence: float between 0 and 1
         """
         if not self.is_trained:
-            print("WARNING: Model not trained yet!")
+            logger.warning("⚠️  Model not trained yet - returning hold signal")
             return 'hold', 0.0
 
-        # PERFORMANCE OPTIMIZATION: Use cached Hurst value (updated every 10 bars)
+        logger.debug(f"📊 Predicting on {len(recent_bars_df)} bars")
+
+        # Use cached Hurst value (updated every 10 bars for performance)
         current_hurst_H = self._last_hurst_H
         current_hurst_C = self._last_hurst_C
 
-        # CRITICAL PERFORMANCE FIX: Only process the LAST sequence_length + some buffer bars
-        # Instead of processing ALL historical data every time
+        # Performance optimization: Only process recent bars needed
         min_bars_needed = self.sequence_length + 100  # +100 for Hurst calculation
 
         if len(recent_bars_df) > min_bars_needed:
-            # Use only the most recent bars needed for prediction
             df_subset = recent_bars_df.tail(min_bars_needed).reset_index(drop=True)
-            print(f"⚡ Fast path: Using {len(df_subset)} recent bars instead of {len(recent_bars_df)}")
+            logger.debug(f"⚡ Fast path: Using {len(df_subset)} recent bars (from {len(recent_bars_df)} total)")
         else:
             df_subset = recent_bars_df
 
