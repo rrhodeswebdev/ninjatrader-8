@@ -1,0 +1,3 @@
+/results/*
+/backtester-venv/*
+/strategies/mean_reversion/__pycache__/strategy.cpython-311.pyc

@@ -1,0 +1,53 @@
+
+----------------* Backtesting result 2024-06-05 23:22:32 *----------------
+
+local CSV file C:\Users\Akim\backtesting\backtesting_20240518\data\mnq_1m_20240310_fixed.csv on M1
+since: 2024-03-12 06:45:00-04:00
+until: 2024-03-25 17:00:00-04:00
+trading pair: MNQUSD
+
+Strategy title: Trend Following Style 2
+Strategy params: source=OPEN Short EMA period=5 Long EMA period=21
+Start balance:		10000.00
+Result balance:		8240.55
+Min equity:		8055.00
+Max equity:		11084.19
+Result equity:		8240.55
+Total gain:		-1759.45
+Total gain percents:	-17.59%
+Trades count:	414
+Orders count:	621
+
+--------------------------------------------------------------------------
+
+
+----------------* Backtesting stats 2024-06-05 23:22:32 *-----------------
+
+local CSV file C:\Users\Akim\backtesting\backtesting_20240518\data\mnq_1m_20240310_fixed.csv on M1
+since: 2024-03-12 06:45:00-04:00
+until: 2024-03-25 17:00:00-04:00
+trading pair: MNQUSD
+
+Strategy title: Trend Following Style 2
+Profit/Loss:	0.38
+Profit Factor:	0.56
+Win rate:	59.42%
+Win/Loss:	1.46
+Wins count:	123
+Losses count:	84
+Expectancy:	-7.20
+
+Avg. Profit (all trades): -7.20
+Avg. Profit (all trades), %: -0.08%
+Avg. Profit (profit-making trades): +15.19
+Avg. Profit (profit-making trades), %: +0.17%
+Avg. Loss (loss-making trades): -39.98
+Avg. Loss (loss-making trades), %: -0.44%
+
+Best deal (relative change): +0.76% (+74.87 absolute) Trade#22 Order#33
+Best deal (absolute change): +74.87 (+0.76% relative) Trade#22 Order#33
+Worst deal (relative change): -3.79% (-375.36 absolute) Trade#24 Order#36
+Worst deal (absolute change): -375.36 (-3.79% relative) Trade#24 Order#36
+
+--------------------------------------------------------------------------
+

@@ -1,0 +1,53 @@
+
+----------------* Backtesting result 2024-06-05 22:03:03 *----------------
+
+local CSV file C:\Users\Akim\backtesting\backtesting_20240518\data\mnq_1m_20240310_fixed.csv on M1
+since: 2024-03-11 10:20:00-04:00
+until: 2024-03-25 17:00:00-04:00
+trading pair: MNQUSD
+
+Strategy title: Mean Reversion
+Strategy params: EMA period=5 source=OPEN ATR period=5 multiplier=1.5 TP ratio=2 SL ratio=1.5
+Start balance:		10000.00
+Result balance:		6288.00
+Min equity:		6268.88
+Max equity:		10683.38
+Result equity:		6316.38
+Total gain:		-3683.62
+Total gain percents:	-36.84%
+Trades count:	405
+Orders count:	609
+
+--------------------------------------------------------------------------
+
+
+----------------* Backtesting stats 2024-06-05 22:03:03 *-----------------
+
+local CSV file C:\Users\Akim\backtesting\backtesting_20240518\data\mnq_1m_20240310_fixed.csv on M1
+since: 2024-03-11 10:20:00-04:00
+until: 2024-03-25 17:00:00-04:00
+trading pair: MNQUSD
+
+Strategy title: Mean Reversion
+Profit/Loss:	1.29
+Profit Factor:	0.70
+Win rate:	35.15%
+Win/Loss:	0.54
+Wins count:	71
+Losses count:	131
+Expectancy:	-17.02
+
+Avg. Profit (all trades): -17.02
+Avg. Profit (all trades), %: -0.20%
+Avg. Profit (profit-making trades): +112.76
+Avg. Profit (profit-making trades), %: +1.34%
+Avg. Loss (loss-making trades): -87.36
+Avg. Loss (loss-making trades), %: -1.04%
+
+Best deal (relative change): +3.92% (+388.20 absolute) Trade#36 Order#54
+Best deal (absolute change): +388.20 (+3.92% relative) Trade#36 Order#54
+Worst deal (relative change): -3.21% (-320.57 absolute) Trade#0 Order#0
+Worst deal (absolute change): -321.13 (-3.05% relative) Trade#32 Order#48
+
+--------------------------------------------------------------------------
+
