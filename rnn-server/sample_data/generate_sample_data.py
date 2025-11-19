@@ -310,7 +310,7 @@ df = generate_realistic_es_data(
 """
 
     readme_file = Path(output_dir) / "README.md"
-    with open(readme_file, 'w') as f:
+    with open(readme_file, 'w', encoding='utf-8') as f:
         f.write(readme_content)
 
     print(f"✓ Saved README: {readme_file}")
