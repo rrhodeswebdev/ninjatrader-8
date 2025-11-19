@@ -1,28 +1,23 @@
-certifi==2021.10.8
-charset-normalizer==2.0.12
-colorama==0.4.6
-contourpy==1.2.0
-cycler==0.12.1
-exceptiongroup==1.2.0
-fonttools==4.50.0
-idna==3.3
-importlib_resources==6.4.0
-iniconfig==2.0.0
-kiwisolver==1.4.5
-matplotlib==3.8.3
-mplfinance==0.12.10b0
-numpy==1.23
-packaging==24.0
-pandas==1.4.1
-pillow==10.2.0
-pluggy==1.4.0
-pyparsing==3.1.2
-pytest==8.1.1
-python-dateutil==2.8.2
-pytz==2021.3
-requests==2.27.1
-six==1.16.0
-ta==0.11.0
-tomli==2.0.1
-urllib3==1.26.8
-zipp==3.18.1
+# Core dependencies for backintime futures backtesting framework
+# Updated to be compatible with rnn-server requirements
+
+# Data processing (compatible with rnn-server)
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0
+
+# Visualization
+matplotlib>=3.8.3
+mplfinance>=0.12.10
+
+# Technical analysis
+ta>=0.11.0
+
+# Testing
+pytest>=8.1.1
+
+# Standard library backports and utilities
+python-dateutil>=2.8.2
+pytz>=2021.3
+colorama>=0.4.6
+requests>=2.27.1
+urllib3>=2.0.0
