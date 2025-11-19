@@ -186,41 +186,37 @@ def main():
     # STEP 6: Compare results
     # ========================================================================
 
-    print("\n" + "="*70)
-    print("COMPARISON SUMMARY")
-    print("="*70)
-
-    if rnn_results.get('total_trades', 0) > 0:
-        print("\n🔹 RNN Event-Driven Backtester Results:")
-        print(f"  Total Trades:     {rnn_results['total_trades']:>6d}")
-        print(f"  Win Rate:         {rnn_results['win_rate']*100:>6.1f}%")
-        print(f"  Total P&L:        ${rnn_results['total_pnl']:>8,.2f}")
-        print(f"  Total Return:     {rnn_results['total_return_pct']:>6.1f}%")
-        print(f"  Sharpe Ratio:     {rnn_results['sharpe_ratio']:>8.2f}")
-        print(f"  Sortino Ratio:    {rnn_results['sortino_ratio']:>8.2f}")
-        print(f"  Profit Factor:    {rnn_results['profit_factor']:>8.2f}")
-        print(f"  Max Drawdown:     {rnn_results['max_drawdown']:>6.1f}%")
-        print(f"  Avg Trade P&L:    ${rnn_results['avg_trade_pnl']:>8,.2f}")
-    else:
-        print("\n⚠️  RNN backtester: No trades executed")
-
     if has_backintime and backintime_results:
-        print("\n🔹 backintime Framework Results:")
-        stats = backintime_results.get_stats()
-        print(f"  Total Trades:     {stats.get('total_trades', 'N/A'):>6}")
-        print(f"  Win Rate:         {stats.get('win_rate', 0)*100:>6.1f}%")
-        print(f"  Total P&L:        ${stats.get('total_pnl', 0):>8,.2f}")
-        print(f"  Sharpe Ratio:     {stats.get('sharpe_ratio', 0):>8.2f}")
-        print(f"  Max Drawdown:     {stats.get('max_drawdown', 0):>6.1f}%")
+        # Use the comparison utility
+        from data_loaders import compare_backtest_results
 
-        print("\n📊 Execution Differences:")
-        print("  backintime provides:")
-        print("    ✓ Realistic order fills (market/limit)")
-        print("    ✓ Margin management")
-        print("    ✓ Session-based trading")
-        print("    ✓ Professional broker simulation")
+        comparison_df = compare_backtest_results(
+            rnn_results,
+            backintime_results,
+            verbose=True
+        )
     else:
+        # Manual display if backintime not available
+        print("\n" + "="*70)
+        print("COMPARISON SUMMARY")
+        print("="*70)
+
+        if rnn_results.get('total_trades', 0) > 0:
+            print("\n🔹 RNN Event-Driven Backtester Results:")
+            print(f"  Total Trades:     {rnn_results['total_trades']:>6d}")
+            print(f"  Win Rate:         {rnn_results['win_rate']*100:>6.1f}%")
+            print(f"  Total P&L:        ${rnn_results['total_pnl']:>8,.2f}")
+            print(f"  Total Return:     {rnn_results['total_return_pct']:>6.1f}%")
+            print(f"  Sharpe Ratio:     {rnn_results['sharpe_ratio']:>8.2f}")
+            print(f"  Sortino Ratio:    {rnn_results['sortino_ratio']:>8.2f}")
+            print(f"  Profit Factor:    {rnn_results['profit_factor']:>8.2f}")
+            print(f"  Max Drawdown:     {rnn_results['max_drawdown']:>6.1f}%")
+            print(f"  Avg Trade P&L:    ${rnn_results['avg_trade_pnl']:>8,.2f}")
+        else:
+            print("\n⚠️  RNN backtester: No trades executed")
+
         print("\n⚠️  backintime results not available")
+        print("   Install with: python3 -m pip install ../backtester/src")
 
     # ========================================================================
     # STEP 7: Recommendations

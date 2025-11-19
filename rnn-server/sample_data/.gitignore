@@ -1,0 +1,3 @@
+# Generated data files (keep the generator script)
+*.csv
+!.gitignore
