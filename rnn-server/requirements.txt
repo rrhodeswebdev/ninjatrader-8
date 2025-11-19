@@ -1,0 +1,27 @@
+# Core dependencies for RNN Trading Server
+# Python version: >=3.10,<3.12
+
+# Web framework
+fastapi[standard]>=0.118.0
+uvicorn>=0.30.0
+
+# Data processing
+numpy>=1.26.0,<2.0.0
+pandas>=2.2.0
+scipy>=1.13.0
+
+# Machine learning
+scikit-learn>=1.5.0
+torch>=2.0.0
+
+# Time series analysis
+hurst>=0.0.5
+
+# Optimization/compilation (optional)
+nuitka>=2.8.1
+ordered-set>=4.1.0
+zstandard>=0.25.0
+
+# Backtesting framework integration (optional - install separately)
+# Install with: pip install ../backtester/src
+# backintime>=0.1.0
