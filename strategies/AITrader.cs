@@ -530,9 +530,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print("WARNING: Secondary timeframe (5-min) not available yet!");
             }
 
-            jsonBuilder.AppendFormat("],\"type\":\"historical\",\"dailyGoal\":{0},\"dailyMaxLoss\":{1}}}",
+            jsonBuilder.AppendFormat("],\"type\":\"historical\",\"dailyGoal\":{0},\"dailyMaxLoss\":{1},\"contract\":\"{2}\"}}",
                 dailyProfitGoal,
-                dailyMaxLoss);
+                dailyMaxLoss,
+                Instrument.MasterInstrument.Name);
             string jsonData = jsonBuilder.ToString();
 
             Print("SENDING HISTORICAL DATA (" + barCount + " bars)");
@@ -624,7 +625,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     string json;
                     if (hasSecondaryData)
                     {
-                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14},\"accountBalance\":{15},\"current_position\":\"{16}\",\"entry_price\":{17},\"position_quantity\":{18}}}",
+                        json = string.Format("{{\"primary_bar\":{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5}}},\"secondary_bar\":{{\"time\":\"{6}\",\"open\":{7},\"high\":{8},\"low\":{9},\"close\":{10},\"volume\":{11}}},\"type\":\"realtime\",\"dailyPnL\":{12},\"dailyGoal\":{13},\"dailyMaxLoss\":{14},\"accountBalance\":{15},\"current_position\":\"{16}\",\"entry_price\":{17},\"position_quantity\":{18},\"contract\":\"{19}\"}}",
                         barTime,
                         barOpen,
                         barHigh,
@@ -643,12 +644,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                         accountBalance,
                         currentPosition,
                         entryPrice,
-                        positionQuantity);
+                        positionQuantity,
+                        Instrument.MasterInstrument.Name);
                     }
                     else
                     {
                         // Legacy format without secondary data
-                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8},\"accountBalance\":{9},\"current_position\":\"{10}\",\"entry_price\":{11},\"position_quantity\":{12}}}",
+                        json = string.Format("{{\"time\":\"{0}\",\"open\":{1},\"high\":{2},\"low\":{3},\"close\":{4},\"volume\":{5},\"type\":\"realtime\",\"dailyPnL\":{6},\"dailyGoal\":{7},\"dailyMaxLoss\":{8},\"accountBalance\":{9},\"current_position\":\"{10}\",\"entry_price\":{11},\"position_quantity\":{12},\"contract\":\"{13}\"}}",
                             barTime,
                             barOpen,
                             barHigh,
@@ -661,7 +663,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             accountBalance,
                             currentPosition,
                             entryPrice,
-                            positionQuantity);
+                            positionQuantity,
+                            Instrument.MasterInstrument.Name);
                     }
 
                     var content = new StringContent(json, Encoding.UTF8, "application/json");
