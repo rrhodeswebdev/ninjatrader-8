@@ -45,15 +45,20 @@ class Trade:
     max_favorable_excursion: float = 0.0  # MFE
     max_adverse_excursion: float = 0.0    # MAE
 
-    def calculate_pnl(self):
-        """Calculate P&L after exit"""
+    def calculate_pnl(self, point_value: float = 2.0):
+        """
+        Calculate P&L after exit
+
+        Args:
+            point_value: Dollar value per point (default: 2.0 for MNQ)
+        """
         if self.exit_price is None:
             return None
 
         if self.direction == 'long':
-            gross_pnl = (self.exit_price - self.entry_price) * self.contracts * 50  # ES: $50/point
+            gross_pnl = (self.exit_price - self.entry_price) * self.contracts * point_value
         else:  # short
-            gross_pnl = (self.entry_price - self.exit_price) * self.contracts * 50
+            gross_pnl = (self.entry_price - self.exit_price) * self.contracts * point_value
 
         # Subtract costs
         self.pnl = gross_pnl - self.commission - self.slippage
@@ -87,20 +92,40 @@ class Backtester:
         initial_capital: float = 25000.0,
         commission_per_contract: float = 2.50,  # Round-trip commission
         slippage_ticks: int = 1,  # 1 tick slippage per side
-        tick_value: float = 12.50,  # ES: $12.50 per tick
+        tick_value: float = None,  # Auto-detect from contract (was 12.50 for ES)
         daily_goal: float = 500.0,
         daily_max_loss: float = 250.0,
         max_trades_per_day: int = 10,
-        risk_manager: Optional[RiskManager] = None
+        risk_manager: Optional[RiskManager] = None,
+        contract: str = 'MNQ'  # Default contract
     ):
         self.initial_capital = initial_capital
         self.commission_per_contract = commission_per_contract
         self.slippage_ticks = slippage_ticks
-        self.tick_value = tick_value
+        self.contract = contract
+
+        # Auto-detect tick_value from contract if not provided
+        if tick_value is None:
+            try:
+                from contract_specs import get_contract
+                spec = get_contract(contract)
+                self.tick_value = spec.tick_value
+                self.point_value = spec.point_value
+                print(f"  Using {contract} contract: ${spec.tick_value}/tick, ${spec.point_value}/point")
+            except:
+                # Fallback to MNQ default
+                self.tick_value = 0.50
+                self.point_value = 2.0
+                print(f"  Using default MNQ values: $0.50/tick, $2/point")
+        else:
+            self.tick_value = tick_value
+            # Estimate point_value from tick_value (4 ticks per point for most contracts)
+            self.point_value = tick_value * 4
+
         self.daily_goal = daily_goal
         self.daily_max_loss = daily_max_loss
         self.max_trades_per_day = max_trades_per_day
-        self.risk_manager = risk_manager or RiskManager()
+        self.risk_manager = risk_manager or RiskManager(default_contract=contract)
 
         # State
         self.state = BacktestState(
@@ -142,6 +167,8 @@ class Backtester:
 
         print(f"\n{'='*60}")
         print(f"BACKTESTING: {len(df)} bars")
+        print(f"Contract: {self.contract}")
+        print(f"Tick Value: ${self.tick_value} | Point Value: ${self.point_value}")
         print(f"Initial Capital: ${self.initial_capital:,.2f}")
         print(f"Commission: ${self.commission_per_contract}/contract round-trip")
         print(f"Slippage: {self.slippage_ticks} tick(s) per side")
@@ -298,8 +325,8 @@ class Backtester:
         position.exit_reason = reason
         position.bars_held = (exit_time - position.entry_time).total_seconds() / 60  # Assuming 1-min bars
 
-        # Calculate P&L
-        position.calculate_pnl()
+        # Calculate P&L with correct point value
+        position.calculate_pnl(point_value=self.point_value)
 
         # Update daily P&L
         self.state.daily_pnl += position.pnl
@@ -374,11 +401,11 @@ class Backtester:
         equity = self.state.equity
 
         for position in self.state.positions:
-            # Mark to market
+            # Mark to market using correct point value
             if position.direction == 'long':
-                unrealized_pnl = (current_price - position.entry_price) * position.contracts * 50
+                unrealized_pnl = (current_price - position.entry_price) * position.contracts * self.point_value
             else:
-                unrealized_pnl = (position.entry_price - current_price) * position.contracts * 50
+                unrealized_pnl = (position.entry_price - current_price) * position.contracts * self.point_value
 
             equity += unrealized_pnl
 
