@@ -15,6 +15,19 @@ from model import TradingModel
 import asyncio
 import math
 
+# Import configuration
+try:
+    from config import CONTRACT as DEFAULT_CONTRACT
+except ImportError:
+    DEFAULT_CONTRACT = 'MNQ'  # Fallback if config.py doesn't exist
+
+# Import contract specifications
+try:
+    from contract_specs import get_contract
+    CONTRACTS_AVAILABLE = True
+except ImportError:
+    CONTRACTS_AVAILABLE = False
+
 # Import functional modules
 from core.validation import (
     validate_bar_data,
@@ -100,6 +113,7 @@ class RealtimeRequest(BaseModel):
     current_position: Optional[str] = "flat"
     entry_price: Optional[float] = 0.0
     position_quantity: Optional[int] = 0
+    contract: Optional[str] = None  # NEW: Contract symbol (ES, NQ, MNQ, etc.)
 
 @app.get("/")
 def read_root():

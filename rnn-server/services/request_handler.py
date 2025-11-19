@@ -138,7 +138,8 @@ def handle_realtime_request(
     request: Dict[str, Any],
     model,
     training_status: Dict[str, Any],
-    min_confidence_threshold: float = 0.25
+    min_confidence_threshold: float = 0.25,
+    default_contract: str = 'MNQ'
 ) -> Dict[str, Any]:
     """
     Handle realtime prediction request functionally.
