@@ -165,6 +165,9 @@ class Backtester:
         # Track predictions for analysis
         predictions_log = []
 
+        # Minimum bars needed for regime detection (ADX calculation requires ~60 bars)
+        min_bars_required = max(60, model.sequence_length)
+
         print(f"\n{'='*60}")
         print(f"BACKTESTING: {len(df)} bars")
         print(f"Contract: {self.contract}")
@@ -173,10 +176,11 @@ class Backtester:
         print(f"Commission: ${self.commission_per_contract}/contract round-trip")
         print(f"Slippage: {self.slippage_ticks} tick(s) per side")
         print(f"Daily Goal: ${self.daily_goal:.2f} | Max Loss: ${self.daily_max_loss:.2f}")
+        print(f"Warm-up period: {min_bars_required} bars (for regime detection)")
         print(f"{'='*60}\n")
 
-        # Iterate through each bar
-        for i in range(model.sequence_length, len(df)):
+        # Iterate through each bar - start after warm-up period
+        for i in range(min_bars_required, len(df)):
             current_bar = df.iloc[i]
             current_time = current_bar['time']
 

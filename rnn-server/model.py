@@ -147,7 +147,10 @@ def detect_market_regime_enhanced(df, lookback=100):
             - trend_strength: float (ADX value)
             - vol_ratio: float (current volatility / historical volatility)
     """
-    if len(df) < lookback:
+    # ADX calculation requires period*2 bars (14*2=28), plus some extra for EMAs
+    min_bars_required = 60
+
+    if len(df) < min_bars_required:
         return {
             'regime': 'unknown',
             'trend_direction': 'neutral',
@@ -155,7 +158,16 @@ def detect_market_regime_enhanced(df, lookback=100):
             'vol_ratio': 1.0
         }
 
-    recent_data = df.tail(lookback)
+    recent_data = df.tail(min(lookback, len(df)))
+
+    # Ensure we have enough data for ADX calculation
+    if len(recent_data) < min_bars_required:
+        return {
+            'regime': 'unknown',
+            'trend_direction': 'neutral',
+            'trend_strength': 0.0,
+            'vol_ratio': 1.0
+        }
 
     # Calculate ADX for trend detection
     adx = calculate_adx(recent_data['high'].values,
