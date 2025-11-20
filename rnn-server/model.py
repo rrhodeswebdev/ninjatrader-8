@@ -14,6 +14,7 @@ from scipy import stats
 import time
 from functools import wraps
 from trading_metrics import evaluate_trading_performance, calculate_sharpe_ratio
+from core.indicators import calculate_adx
 
 # ROUND 2 IMPROVEMENTS: Import advanced modules
 try:
