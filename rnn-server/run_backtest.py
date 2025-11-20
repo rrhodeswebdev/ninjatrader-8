@@ -16,6 +16,16 @@ from backtester import Backtester
 from risk_management import RiskManager
 import matplotlib.pyplot as plt
 import seaborn as sns
+from config import (
+    MODEL_SEQUENCE_LENGTH,
+    BACKTEST_INITIAL_CAPITAL,
+    BACKTEST_COMMISSION_PER_CONTRACT,
+    BACKTEST_SLIPPAGE_TICKS,
+    DAILY_GOAL,
+    DAILY_MAX_LOSS,
+    MAX_TRADES_PER_DAY,
+    CONTRACT
+)
 
 
 def load_sample_data():
@@ -217,7 +227,8 @@ def main():
 
     # Step 3: Train model
     print(f"\n🔧 TRAINING MODEL...")
-    model = TradingModel(sequence_length=40)
+    print(f"  Using sequence length: {MODEL_SEQUENCE_LENGTH}")
+    model = TradingModel(sequence_length=MODEL_SEQUENCE_LENGTH)
 
     # Train on historical data
     model.train(df_train, epochs=50, batch_size=32)
@@ -226,12 +237,13 @@ def main():
     print(f"\n🚀 RUNNING BACKTEST ON TEST DATA...")
 
     backtester = Backtester(
-        initial_capital=25000.0,
-        commission_per_contract=2.50,
-        slippage_ticks=1,
-        daily_goal=500.0,
-        daily_max_loss=250.0,
-        max_trades_per_day=10
+        initial_capital=BACKTEST_INITIAL_CAPITAL,
+        commission_per_contract=BACKTEST_COMMISSION_PER_CONTRACT,
+        slippage_ticks=BACKTEST_SLIPPAGE_TICKS,
+        daily_goal=DAILY_GOAL,
+        daily_max_loss=DAILY_MAX_LOSS,
+        max_trades_per_day=MAX_TRADES_PER_DAY,
+        contract=CONTRACT
     )
 
     results = backtester.run(df_test, model, verbose=True)
