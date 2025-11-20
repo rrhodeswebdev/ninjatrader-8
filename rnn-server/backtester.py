@@ -125,7 +125,7 @@ class Backtester:
         self.daily_goal = daily_goal
         self.daily_max_loss = daily_max_loss
         self.max_trades_per_day = max_trades_per_day
-        self.risk_manager = risk_manager or RiskManager(default_contract=contract)
+        self.risk_manager = risk_manager or RiskManager()
 
         # State
         self.state = BacktestState(
