@@ -21,6 +21,16 @@ from datetime import datetime, timedelta
 from model import TradingModel
 from backtester import Backtester as RNNBacktester
 from data_loaders import DataLoader
+from config import (
+    MODEL_SEQUENCE_LENGTH,
+    BACKTEST_INITIAL_CAPITAL,
+    BACKTEST_COMMISSION_PER_CONTRACT,
+    BACKTEST_SLIPPAGE_TICKS,
+    DAILY_GOAL,
+    DAILY_MAX_LOSS,
+    MAX_TRADES_PER_DAY,
+    CONTRACT
+)
 
 
 def generate_sample_data(n_bars: int = 3000) -> pd.DataFrame:
@@ -121,8 +131,10 @@ def main():
     # ========================================================================
 
     print("\n[STEP 3] Training RNN model...")
+    print(f"  Using sequence length: {MODEL_SEQUENCE_LENGTH}")
+    print(f"  Contract: {CONTRACT}")
 
-    model = TradingModel(sequence_length=40)
+    model = TradingModel(sequence_length=MODEL_SEQUENCE_LENGTH)
     model.train(train_df, epochs=30, batch_size=32)
 
     print("✓ Model training complete")
@@ -136,12 +148,13 @@ def main():
     print("="*70)
 
     rnn_backtester = RNNBacktester(
-        initial_capital=25000.0,
-        commission_per_contract=2.50,
-        slippage_ticks=1,
-        daily_goal=500.0,
-        daily_max_loss=250.0,
-        max_trades_per_day=10
+        initial_capital=BACKTEST_INITIAL_CAPITAL,
+        commission_per_contract=BACKTEST_COMMISSION_PER_CONTRACT,
+        slippage_ticks=BACKTEST_SLIPPAGE_TICKS,
+        daily_goal=DAILY_GOAL,
+        daily_max_loss=DAILY_MAX_LOSS,
+        max_trades_per_day=MAX_TRADES_PER_DAY,
+        contract=CONTRACT
     )
 
     rnn_results = rnn_backtester.run(test_df, model, verbose=True)
