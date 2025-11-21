@@ -43,7 +43,11 @@ try:
     BACKINTIME_AVAILABLE = True
 except ImportError:
     BACKINTIME_AVAILABLE = False
-    print("Warning: backintime not installed. Install from /backtester/src")
+    # Create dummy base class if backintime not available
+    class FuturesStrategy:
+        """Dummy base class when backintime is not available"""
+        pass
+    print("⚠️  backintime not installed - adapter functionality limited")
 
 from model import TradingModel
 
@@ -238,9 +242,17 @@ def run_rnn_backtest(
 
     Returns:
         Backtest results object from backintime
+
+    Raises:
+        ImportError: If backintime framework is not installed
+        ValueError: If model is not trained
     """
     if not BACKINTIME_AVAILABLE:
-        raise ImportError("backintime not installed. Install from /backtester/src")
+        raise ImportError(
+            "backintime framework is not installed. "
+            "This feature requires the backintime package which is not included. "
+            "Use the simple RNN backtester instead (see run_backtest.py)"
+        )
 
     if not model.is_trained:
         raise ValueError("Model must be trained before backtesting")
