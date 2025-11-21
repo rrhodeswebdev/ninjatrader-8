@@ -1673,11 +1673,11 @@ class ImprovedTradingRNN(nn.Module):
     - Deeper FC layers (4 layers instead of 3)
     - Optimized for 87 input features (pure price action) and sequence_length=15
     """
-    def __init__(self, input_size=87, hidden_size=128, num_layers=2, output_size=3):  # Updated: 97→87 (Phase 2)
+    def __init__(self, input_size=87, hidden_size=128, num_layers=2, output_size=3, sequence_length=15):
         super(ImprovedTradingRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.sequence_length = 15  # Expected sequence length
+        self.sequence_length = sequence_length  # Use passed parameter instead of hardcoded value
 
         # IMPROVED: Reduced dropout from 0.5 to 0.3
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.3)
@@ -2107,9 +2107,15 @@ class TradingModel:
         # PHASE 2 UPDATE: Changed input_size from 105 → 87 (removed 18 indicator features)
         # Pure price action features only (no ATR, RSI, MACD, etc.)
         # sequence_length=15, num_layers=2 for better generalization
-        self.model = ImprovedTradingRNN(input_size=87, hidden_size=128, num_layers=2, output_size=3)
-        self.scaler = StandardScaler()
         self.sequence_length = sequence_length
+        self.model = ImprovedTradingRNN(
+            input_size=87,
+            hidden_size=128,
+            num_layers=2,
+            output_size=3,
+            sequence_length=sequence_length  # Pass sequence_length to model architecture
+        )
+        self.scaler = StandardScaler()
         self.is_trained = False
         self.model_path = Path(model_path)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
