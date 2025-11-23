@@ -23,17 +23,12 @@ setup(
         'backintime/declarative/indicators'
         ],
     install_requires = [
-        'certifi==2021.10.8',
-        'charset-normalizer==2.0.12',
-        'idna==3.3',
-        'numpy==1.23',
-        'pandas==1.4.1',
-        'python-dateutil==2.8.2',
-        'pytz==2021.3',
-        'requests==2.27.1',
-        'six==1.16.0',
-        'ta>=0.9.0',
-        'urllib3==1.26.8'
+        'numpy>=1.26.0,<2.0.0',
+        'pandas>=2.2.0',
+        'python-dateutil>=2.8.2',
+        'pytz>=2021.3',
+        'requests>=2.27.1',
+        'urllib3>=2.0.0'
         ],
     classifiers = [
         "Programming Language :: Python",
