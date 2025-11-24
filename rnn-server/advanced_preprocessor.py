@@ -225,7 +225,7 @@ class AdvancedDataPreprocessor:
         # Check for remaining NaNs
         nan_counts = df.isna().sum()
         if nan_counts.any():
-            print("\n⚠️  Remaining NaN values:")
+            print("\n  Remaining NaN values:")
             print(nan_counts[nan_counts > 0])
 
         # Check for infinite values
@@ -237,7 +237,7 @@ class AdvancedDataPreprocessor:
                 inf_counts[col] = inf_count
 
         if inf_counts:
-            print("\n⚠️  Infinite values found:")
+            print("\n  Infinite values found:")
             for col, count in inf_counts.items():
                 print(f"  {col}: {count}")
 
@@ -248,14 +248,14 @@ class AdvancedDataPreprocessor:
                 constant_cols.append(col)
 
         if constant_cols:
-            print("\n⚠️  Constant columns (no variance):")
+            print("\n  Constant columns (no variance):")
             for col in constant_cols:
                 print(f"  {col}")
 
         # Check data distribution
-        print("\n✅ Data shape:", df.shape)
-        print("✅ Numeric features:", len(numeric_cols))
-        print("✅ Non-numeric features:", len(df.columns) - len(numeric_cols))
+        print("\n Data shape:", df.shape)
+        print(" Numeric features:", len(numeric_cols))
+        print(" Non-numeric features:", len(df.columns) - len(numeric_cols))
 
         print("="*70 + "\n")
 

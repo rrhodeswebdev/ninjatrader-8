@@ -54,7 +54,7 @@ if model_path.exists():
         print(f"{'='*70}")
         
         if model.is_trained:
-            print("✅ Model is properly trained and loads correctly!")
+            print(" Model is properly trained and loads correctly!")
             print("\nThe issue is likely:")
             print("  - Server not running")
             print("  - Server didn't load model on startup")
@@ -64,13 +64,13 @@ if model_path.exists():
             print("    cd rnn-server")
             print("    uv run fastapi dev main.py")
         else:
-            print("❌ Model file exists but is_trained = False")
+            print(" Model file exists but is_trained = False")
             print("\nThe checkpoint may be corrupted or incomplete.")
             print("\nSOLUTION:")
             print("  Retrain the model by sending historical data from NinjaTrader")
             
     except Exception as e:
-        print(f"\n❌ Error loading model: {e}")
+        print(f"\n Error loading model: {e}")
         print("\nThe model file may be corrupted.")
         print("\nSOLUTION:")
         print("  Delete the model and retrain:")
@@ -78,7 +78,7 @@ if model_path.exists():
         print("    # Then send historical data from NinjaTrader to retrain")
         
 else:
-    print(f"\n❌ Model file does not exist!")
+    print(f"\n Model file does not exist!")
     print(f"\nSOLUTION:")
     print("  Train the model by sending historical data from NinjaTrader")
     print("  The /analysis endpoint will trigger training automatically")

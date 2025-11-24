@@ -513,12 +513,12 @@ class Backtester:
         print("BACKTEST RESULTS")
         print(f"{'='*60}")
 
-        print(f"\n📊 TRADE STATISTICS")
+        print(f"\n TRADE STATISTICS")
         print(f"  Total Trades:        {results['total_trades']:>8d}")
         print(f"  Winning Trades:      {results['winning_trades']:>8d} ({results['win_rate']*100:>5.1f}%)")
         print(f"  Losing Trades:       {results['losing_trades']:>8d}")
 
-        print(f"\n💰 P&L METRICS")
+        print(f"\n P&L METRICS")
         print(f"  Total P&L:           ${results['total_pnl']:>8,.2f}")
         print(f"  Total Return:        {results['total_return_pct']:>8.2f}%")
         print(f"  Avg Trade P&L:       ${results['avg_trade_pnl']:>8,.2f}")
@@ -527,28 +527,28 @@ class Backtester:
         print(f"  Largest Win:         ${results['largest_win']:>8,.2f}")
         print(f"  Largest Loss:        ${results['largest_loss']:>8,.2f}")
 
-        print(f"\n📈 RISK-ADJUSTED METRICS")
+        print(f"\n RISK-ADJUSTED METRICS")
         print(f"  Sharpe Ratio:        {results['sharpe_ratio']:>8.2f}")
         print(f"  Sortino Ratio:       {results['sortino_ratio']:>8.2f}")
         print(f"  Profit Factor:       {results['profit_factor']:>8.2f}")
         print(f"  Expectancy:          ${results['expectancy']:>8,.2f}")
         print(f"  Max Drawdown:        {results['max_drawdown']:>8.2f}%")
 
-        print(f"\n🎯 EXIT ANALYSIS")
+        print(f"\n EXIT ANALYSIS")
         print(f"  Exits at Stop:       {results['exits_at_stop']:>8d} ({results['exits_at_stop']/results['total_trades']*100:>5.1f}%)")
         print(f"  Exits at Target:     {results['exits_at_target']:>8d} ({results['exits_at_target']/results['total_trades']*100:>5.1f}%)")
         print(f"  Other Exits:         {results['exits_other']:>8d}")
 
-        print(f"\n⏱️  HOLDING TIME (minutes)")
+        print(f"\n  HOLDING TIME (minutes)")
         print(f"  Avg Bars Held:       {results['avg_bars_held']:>8.1f}")
         print(f"  Avg Win Duration:    {results['avg_win_bars']:>8.1f}")
         print(f"  Avg Loss Duration:   {results['avg_loss_bars']:>8.1f}")
 
-        print(f"\n🎲 EFFICIENCY")
+        print(f"\n EFFICIENCY")
         print(f"  Avg MFE (points):    {results['avg_mfe']:>8.2f}")
         print(f"  Avg MAE (points):    {results['avg_mae']:>8.2f}")
 
-        print(f"\n💵 EQUITY")
+        print(f"\n EQUITY")
         print(f"  Initial:             ${self.initial_capital:>8,.2f}")
         print(f"  Final:               ${results['final_equity']:>8,.2f}")
         print(f"  Peak:                ${results['peak_equity']:>8,.2f}")

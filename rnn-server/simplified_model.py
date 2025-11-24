@@ -24,8 +24,8 @@ class SimplifiedTradingModel(nn.Module):
     - Dropout for regularization
 
     Complexity:
-    - Old model: 166 features × 128 hidden × 20 sequence ≈ 425k parameters
-    - New model: 28 features × 32 hidden × 20 sequence ≈ 18k parameters
+    - Old model: 166 features  128 hidden  20 sequence  425k parameters
+    - New model: 28 features  32 hidden  20 sequence  18k parameters
     - Reduction: 95% fewer parameters
     """
 

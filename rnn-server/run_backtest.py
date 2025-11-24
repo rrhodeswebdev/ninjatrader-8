@@ -55,7 +55,7 @@ def load_sample_data():
     df = pd.read_csv(data_file)
     df['time'] = pd.to_datetime(df['time'])
 
-    print(f"\n✓ Loaded {len(df)} bars from {data_file}")
+    print(f"\n Loaded {len(df)} bars from {data_file}")
     print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
     print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
 
@@ -68,7 +68,7 @@ def create_synthetic_data(n_bars=5000):
 
     This generates random walk price data with realistic intraday patterns
     """
-    print(f"\n⚠️  No historical data found. Generating {n_bars} bars of synthetic data for testing...")
+    print(f"\n  No historical data found. Generating {n_bars} bars of synthetic data for testing...")
 
     # Start parameters
     start_price = 4500.0
@@ -106,7 +106,7 @@ def create_synthetic_data(n_bars=5000):
         'volume': volume
     })
 
-    print(f"✓ Generated synthetic data:")
+    print(f" Generated synthetic data:")
     print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
 
     return df
@@ -168,7 +168,7 @@ def plot_results(results: dict, save_path: str = 'backtest_results.png'):
     ax4.axis('off')
 
     metrics_text = f"""
-    📊 PERFORMANCE SUMMARY
+     PERFORMANCE SUMMARY
 
     Total Trades:        {results['total_trades']:>6d}
     Win Rate:            {results['win_rate']*100:>6.1f}%
@@ -195,7 +195,7 @@ def plot_results(results: dict, save_path: str = 'backtest_results.png'):
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"\n✓ Results chart saved to {save_path}")
+    print(f"\n Results chart saved to {save_path}")
 
 
 def main():
@@ -221,12 +221,12 @@ def main():
     df_train = df.iloc[:train_size].copy()
     df_test = df.iloc[train_size:].copy()
 
-    print(f"\n📊 DATA SPLIT:")
+    print(f"\n DATA SPLIT:")
     print(f"  Training:   {len(df_train)} bars ({df_train['time'].min()} to {df_train['time'].max()})")
     print(f"  Testing:    {len(df_test)} bars ({df_test['time'].min()} to {df_test['time'].max()})")
 
     # Step 3: Train model
-    print(f"\n🔧 TRAINING MODEL...")
+    print(f"\n TRAINING MODEL...")
     print(f"  Using sequence length: {MODEL_SEQUENCE_LENGTH}")
     model = TradingModel(sequence_length=MODEL_SEQUENCE_LENGTH)
 
@@ -234,7 +234,7 @@ def main():
     model.train(df_train, epochs=50, batch_size=32)
 
     # Step 4: Run backtest
-    print(f"\n🚀 RUNNING BACKTEST ON TEST DATA...")
+    print(f"\n RUNNING BACKTEST ON TEST DATA...")
 
     backtester = Backtester(
         initial_capital=BACKTEST_INITIAL_CAPITAL,
@@ -250,7 +250,7 @@ def main():
 
     # Step 5: Additional analysis
     if results.get('total_trades', 0) > 0:
-        print(f"\n📈 ADDITIONAL ANALYSIS:")
+        print(f"\n ADDITIONAL ANALYSIS:")
         print(f"  Average holding time: {results['avg_bars_held']:.1f} minutes")
         print(f"  Average MFE: {results['avg_mfe']:.2f} points")
         print(f"  Average MAE: {results['avg_mae']:.2f} points")
@@ -260,13 +260,13 @@ def main():
         try:
             plot_results(results)
         except ImportError:
-            print("\n⚠️  matplotlib not available. Install with: uv add matplotlib seaborn")
+            print("\n  matplotlib not available. Install with: uv add matplotlib seaborn")
 
     # Step 6: Save results
     if results.get('total_trades', 0) > 0:
         results_file = Path('backtest_results.csv')
         results['trades_df'].to_csv(results_file, index=False)
-        print(f"\n✓ Trade details saved to {results_file}")
+        print(f"\n Trade details saved to {results_file}")
 
     print(f"\n{'='*60}")
     print("  BACKTESTING COMPLETE")

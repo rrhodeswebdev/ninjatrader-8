@@ -69,13 +69,19 @@ def _parse_candle(candle, schema: CSVCandlesSchema, tf, date_parser, timezone) -
         raise ParsingError(str(e))
 
 
-def _skip_to_date(rows: t.Iterable[t.Iterable[str]], 
-                  column_index: int, 
+def _skip_to_date(rows: t.Iterable[t.Iterable[str]],
+                  column_index: int,
                   date: datetime,
                   parse_date: t.Callable,
                   timezone: str) -> t.Iterable[t.Iterable[str]]:
     """Skip rows until date at `column_index` equals `date`."""
-    predicate = lambda row: parse_date(row[column_index], timezone) != date
+    # Normalize both dates for comparison (remove timezone if present)
+    target_date = date.replace(tzinfo=None) if date.tzinfo else date
+    def predicate(row):
+        row_date = parse_date(row[column_index], timezone)
+        # Remove timezone for comparison to handle timezone-naive CSVs
+        row_date_naive = row_date.replace(tzinfo=None) if row_date.tzinfo else row_date
+        return row_date_naive != target_date
     return dropwhile(predicate, rows)
 
 

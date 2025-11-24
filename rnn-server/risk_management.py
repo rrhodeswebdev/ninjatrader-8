@@ -272,7 +272,7 @@ class StopTargetCalculator:
             strength_factor = min(1.0, (trend_strength - 20) / 40)  # CHANGED: /40 instead of /20
             target_multiplier = 1.0 - (0.2 * strength_factor)  # CHANGED: 0.2 instead of 0.4
 
-            print(f"⚠️  Counter-trend {direction} trade in {trend_direction} trend (ADX={trend_strength:.1f})")
+            print(f"  Counter-trend {direction} trade in {trend_direction} trend (ADX={trend_strength:.1f})")
             print(f"   Target reduced by {(1-target_multiplier)*100:.0f}% (multiplier={target_multiplier:.2f})")
 
         # Confidence-based adjustment (tighter stops for low confidence)

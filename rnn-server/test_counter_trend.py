@@ -308,10 +308,10 @@ if __name__ == '__main__':
         test_trend_alignment_feature()
 
         print("\n" + "="*70)
-        print("✅ ALL TESTS COMPLETED SUCCESSFULLY")
+        print(" ALL TESTS COMPLETED SUCCESSFULLY")
         print("="*70 + "\n")
 
     except Exception as e:
-        print(f"\n❌ TEST FAILED: {e}")
+        print(f"\n TEST FAILED: {e}")
         import traceback
         traceback.print_exc()

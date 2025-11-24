@@ -145,7 +145,7 @@ def train_model_background(df: pd.DataFrame):
         training_status["progress"] = "Training complete - model saved"
 
         print("\n" + "="*70)
-        print("✅ BACKGROUND TRAINING COMPLETE")
+        print(" BACKGROUND TRAINING COMPLETE")
         print(f"   Model trained: {trading_model.is_trained}")
         print(f"   Model saved: models/trading_model.pth")
         print("   Ready for predictions!")
@@ -155,7 +155,7 @@ def train_model_background(df: pd.DataFrame):
         training_status["is_training"] = False
         training_status["error"] = str(e)
         training_status["progress"] = f"Training failed: {e}"
-        print(f"\n❌ Training error: {e}")
+        print(f"\n Training error: {e}")
         import traceback
         traceback.print_exc()
 
@@ -201,7 +201,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
     else:
         # Realtime data handling
         print(f"\n{'='*70}")
-        print(f"📥 RECEIVED REALTIME REQUEST")
+        print(f" RECEIVED REALTIME REQUEST")
         print(f"{'='*70}")
         print(f"Data Type: REALTIME")
 
@@ -284,7 +284,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
             risk = response.get('risk_management', {})
             if risk.get('contracts', 0) > 0:
-                print(f"\n📊 RISK MANAGEMENT PARAMETERS:")
+                print(f"\n RISK MANAGEMENT PARAMETERS:")
                 print(f"  Contracts: {risk['contracts']}")
                 print(f"  Entry Price: ${risk['entry_price']:.2f}")
                 print(f"  Stop Loss: ${risk['stop_loss']:.2f}")
@@ -298,7 +298,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             sanitized = sanitize_dict_floats(response)
             return sanitized
         except Exception as e:
-            print(f"\n❌ ERROR SANITIZING RESPONSE: {e}")
+            print(f"\n ERROR SANITIZING RESPONSE: {e}")
             import traceback
             traceback.print_exc()
             # Return a basic error response

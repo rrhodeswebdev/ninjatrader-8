@@ -23,7 +23,7 @@ try:
     from confidence_calibration_advanced import EnsembleCalibration, TemperatureScaling
     ADVANCED_MODULES_AVAILABLE = True
 except ImportError as e:
-    print(f"⚠️  Advanced modules not available: {e}")
+    print(f"WARNING: Advanced modules not available: {e}")
     print("   Run with standard functionality. Install advanced modules for improvements.")
     ADVANCED_MODULES_AVAILABLE = False
 
@@ -35,7 +35,7 @@ def timing_decorator(func):
         result = func(*args, **kwargs)
         elapsed = time.perf_counter() - start
         if elapsed > 0.01:  # Only log if > 10ms
-            print(f"⚡ {func.__name__}: {elapsed*1000:.2f}ms")
+            print(f" {func.__name__}: {elapsed*1000:.2f}ms")
         return result
     return wrapper
 
@@ -803,7 +803,7 @@ def calculate_price_features(df):
         std_dev = np.zeros(n_bars)
         # Z-score (standardized deviation)
         z_score = np.zeros(n_bars)
-        # Bollinger width equivalent (range of ±2 std devs)
+        # Bollinger width equivalent (range of 2 std devs)
         bb_width = np.zeros(n_bars)
 
         for i in range(window, n_bars):
@@ -1218,7 +1218,7 @@ def calculate_microstructure_features(df):
     # Estimates bid-ask spread from price series
     roll_spread = np.zeros(n_bars)
     for i in range(20, n_bars):
-        # Roll (1984): spread = 2 * sqrt(-cov(Δp_t, Δp_t-1))
+        # Roll (1984): spread = 2 * sqrt(-cov(p_t, p_t-1))
         price_changes = np.diff(close[i-20:i+1])
         if len(price_changes) > 1:
             cov = np.cov(price_changes[:-1], price_changes[1:])[0, 1]
@@ -1609,8 +1609,8 @@ class TradingRNN(nn.Module):
     Total: 62 features (removed 25 redundant/zero-value features from original 87)
 
     Architecture improvements:
-    - Increased hidden size: 64 → 128
-    - Increased layers: 2 → 3
+    - Increased hidden size: 64  128
+    - Increased layers: 2  3
     - Added self-attention mechanism
     - Better regularization
     """
@@ -1750,7 +1750,7 @@ class SimplifiedTradingRNN(nn.Module):
     PERFORMANCE OPTIMIZATION: Simplified architecture for faster training
 
     Key optimizations:
-    - Reduced FC layers from 4 to 3 (128 → 64 → 3)
+    - Reduced FC layers from 4 to 3 (128  64  3)
     - Reduced dropout from 0.25 to 0.2
     - ~20% fewer parameters than ImprovedTradingRNN
     - Faster forward pass, less overfitting risk
@@ -2104,7 +2104,7 @@ class TradingModel:
     Wrapper class for training and prediction with state management
     """
     def __init__(self, sequence_length=15, model_path='models/trading_model.pth'):
-        # PHASE 2 UPDATE: Changed input_size from 105 → 87 (removed 18 indicator features)
+        # PHASE 2 UPDATE: Changed input_size from 105  87 (removed 18 indicator features)
         # Pure price action features only (no ATR, RSI, MACD, etc.)
         # sequence_length=15, num_layers=2 for better generalization
         self.sequence_length = sequence_length
@@ -2136,9 +2136,9 @@ class TradingModel:
                 calib_path = Path('models/calibration')
                 if calib_path.exists():
                     self.calibration.load(str(calib_path))
-                    print("✓ Loaded confidence calibration")
+                    print(" Loaded confidence calibration")
             except Exception as e:
-                print(f"⚠️  Could not load calibration: {e}")
+                print(f"WARNING:  Could not load calibration: {e}")
                 self.calibration = None
 
         print(f"Using device: {self.device}")
@@ -2153,7 +2153,7 @@ class TradingModel:
         # if self.model_path.exists():
         #     self.load_model()
 
-        print(f"\n⚠️  MODEL INITIALIZATION: is_trained = {self.is_trained}")
+        print(f"\nWARNING:  MODEL INITIALIZATION: is_trained = {self.is_trained}")
         print(f"   Model file exists: {self.model_path.exists()}")
         print(f"   Auto-load: DISABLED (model must be trained explicitly)\n")
 
@@ -2163,9 +2163,9 @@ class TradingModel:
         #         print("Compiling model with torch.compile()...")
         #         self.model = torch.compile(self.model, mode='reduce-overhead')
         #         self.compiled = True
-        #         print("✓ Model compiled successfully (expect 10-20% speedup)")
+        #         print(" Model compiled successfully (expect 10-20% speedup)")
         #     except Exception as e:
-        #         print(f"⚠️  torch.compile() failed: {e}")
+        #         print(f"WARNING:  torch.compile() failed: {e}")
         #         print("   Continuing with uncompiled model...")
 
         # Historical data storage (multi-timeframe support)
@@ -2278,11 +2278,11 @@ class TradingModel:
                 print(f"  Min H: {min(hurst_valid):.4f}")
                 print(f"  Max H: {max(hurst_valid):.4f}")
                 if avg_hurst > 0.5:
-                    print(f"  → Overall TRENDING (persistent) market")
+                    print(f"   Overall TRENDING (persistent) market")
                 elif avg_hurst < 0.5:
-                    print(f"  → Overall MEAN-REVERTING (anti-persistent) market")
+                    print(f"   Overall MEAN-REVERTING (anti-persistent) market")
                 else:
-                    print(f"  → Overall RANDOM WALK market")
+                    print(f"   Overall RANDOM WALK market")
 
         # ============================================================================
         # REMOVED: All lagging indicator calculations for pure price action migration
@@ -2335,7 +2335,7 @@ class TradingModel:
         # Combine all features (62 total):
         # OHLC (4) + Hurst (2) + ATR (1) + Price Features (18) + Deviation Features (23) = 48
         # Wait, let me recount: 4+2+1+18+23 = 48, but we said 47...
-        # Actually: Original 24 + Deviation 23 = 47 ✓
+        # Actually: Original 24 + Deviation 23 = 47 
 
         # Debug: Check array sizes before stacking
         n_bars = len(ohlc)
@@ -2377,7 +2377,7 @@ class TradingModel:
         # REMOVED: 6 order flow features (always 0 during training)
         # REMOVED: 10 redundant deviation features (windows 5 and 10)
         # REMOVED: tf2_delta (always 0)
-        # Total removed: 23 features (87 → 64)
+        # Total removed: 23 features (87  64)
 
         # Debug: Validate all feature array lengths before stacking
         feature_arrays = {
@@ -2800,9 +2800,9 @@ class TradingModel:
                 print(f"  HOLD:  {uptrend_counts[1]:4d} ({uptrend_counts[1]/len(uptrend_labels)*100:5.1f}%)")
                 print(f"  LONG:  {uptrend_counts[2]:4d} ({uptrend_counts[2]/len(uptrend_labels)*100:5.1f}%)")
                 if uptrend_counts[2] > uptrend_counts[0]:
-                    print(f"  ✓ MORE LONG than SHORT (good for uptrend)")
+                    print(f"   MORE LONG than SHORT (good for uptrend)")
                 else:
-                    print(f"  ⚠️  MORE SHORT than LONG (BAD for uptrend)")
+                    print(f"  WARNING:  MORE SHORT than LONG (BAD for uptrend)")
 
             if len(downtrend_labels) > 0:
                 downtrend_counts = np.bincount(downtrend_labels, minlength=3)
@@ -2811,9 +2811,9 @@ class TradingModel:
                 print(f"  HOLD:  {downtrend_counts[1]:4d} ({downtrend_counts[1]/len(downtrend_labels)*100:5.1f}%)")
                 print(f"  LONG:  {downtrend_counts[2]:4d} ({downtrend_counts[2]/len(downtrend_labels)*100:5.1f}%)")
                 if downtrend_counts[0] > downtrend_counts[2]:
-                    print(f"  ✓ MORE SHORT than LONG (good for downtrend)")
+                    print(f"   MORE SHORT than LONG (good for downtrend)")
                 else:
-                    print(f"  ⚠️  MORE LONG than SHORT (BAD for downtrend)")
+                    print(f"  WARNING:  MORE LONG than SHORT (BAD for downtrend)")
 
             if len(ranging_labels) > 0:
                 ranging_counts = np.bincount(ranging_labels, minlength=3)
@@ -2930,7 +2930,7 @@ class TradingModel:
             base_weight=1.0,
             trend_penalty_weight=0.5  # 50% penalty for counter-trend
         )
-        print("✓ Using TrendAwareTradingLoss (PRIORITY 2: trend-aware optimization)")
+        print(" Using TrendAwareTradingLoss (PRIORITY 2: trend-aware optimization)")
 
         # Store trend features from X_train for use in loss calculation
         # We need hurst (feature index 4) and trend_strength (feature index varies, we'll extract it)
@@ -2959,8 +2959,8 @@ class TradingModel:
         accumulation_steps = 4  # Effective batch size = batch_size * 4
 
         if use_amp:
-            print(f"✓ Mixed precision training enabled (expect 30-50% speedup)")
-        print(f"✓ Gradient accumulation: effective batch size = {batch_size * accumulation_steps}")
+            print(f" Mixed precision training enabled (expect 30-50% speedup)")
+        print(f" Gradient accumulation: effective batch size = {batch_size * accumulation_steps}")
 
         # Training loop
         self.model.train()
@@ -2976,7 +2976,7 @@ class TradingModel:
                 batch_y = batch_y.to(self.device)
 
                 # PRIORITY 2: Extract trend features for TrendAwareTradingLoss
-                # UPDATED: Feature indices changed after indicator removal (105 → 87 features)
+                # UPDATED: Feature indices changed after indicator removal (105  87 features)
                 # Feature indices: hurst_H is at index 4 (after OHLC), hurst_emphasized is at index 82
                 # trend_strength_emphasized is at index 83
                 # We use the last position in each sequence as the current trend
@@ -3111,13 +3111,13 @@ class TradingModel:
                 print(f"  Overall Accuracy: {val_accuracy:.4f} ({val_accuracy*100:.1f}%)")
                 print(f"  Per-Class Accuracy: SHORT={per_class_acc[0]:.3f}, HOLD={per_class_acc[1]:.3f}, LONG={per_class_acc[2]:.3f}")
                 print(f"  Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
-                print(f"\n  Raw Logits (mean±std):")
-                print(f"    SHORT: {val_logits_mean[0]:+.3f}±{val_logits_std[0]:.3f}")
-                print(f"    HOLD:  {val_logits_mean[1]:+.3f}±{val_logits_std[1]:.3f}")
-                print(f"    LONG:  {val_logits_mean[2]:+.3f}±{val_logits_std[2]:.3f}")
+                print(f"\n  Raw Logits (meanstd):")
+                print(f"    SHORT: {val_logits_mean[0]:+.3f}{val_logits_std[0]:.3f}")
+                print(f"    HOLD:  {val_logits_mean[1]:+.3f}{val_logits_std[1]:.3f}")
+                print(f"    LONG:  {val_logits_mean[2]:+.3f}{val_logits_std[2]:.3f}")
                 print(f"\n  All Predictions: Short={pred_dist[0]}, Hold={pred_dist[1]}, Long={pred_dist[2]}")
                 if pred_dist[0] == 0:
-                    print(f"  ⚠️  WARNING: Model is NOT predicting SHORT at all! Check logits above.")
+                    print(f"  WARNING:  WARNING: Model is NOT predicting SHORT at all! Check logits above.")
                 print(f"  High-Confidence (>={high_conf_threshold*100:.0f}%):")
                 print(f"    Count: {len(high_conf_preds)} ({len(high_conf_preds)/len(val_predictions)*100:.1f}% of predictions)")
                 print(f"    Accuracy: {high_conf_accuracy:.4f} ({high_conf_accuracy*100:.1f}%)")
@@ -3141,7 +3141,7 @@ class TradingModel:
                 # Save best model
                 self.save_model()
                 if (epoch + 1) % 10 == 0:
-                    print(f"  ✓ New best Sharpe ratio: {best_val_sharpe:.4f} (saved model)")
+                    print(f"   New best Sharpe ratio: {best_val_sharpe:.4f} (saved model)")
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
@@ -3302,9 +3302,9 @@ class TradingModel:
         X, y = self.prepare_data(df, df_secondary=df_secondary, fit_scaler=True)
 
         elapsed = time.time() - start_time
-        print(f"\n✓ Feature computation complete in {elapsed:.2f}s")
+        print(f"\n Feature computation complete in {elapsed:.2f}s")
         print(f"  Sequences: {len(X)}")
-        print(f"  Features per sequence: {X.shape[1]} timesteps × {X.shape[2]} features")
+        print(f"  Features per sequence: {X.shape[1]} timesteps  {X.shape[2]} features")
 
         # Save to compressed numpy format
         save_path = Path(save_path)
@@ -3318,7 +3318,7 @@ class TradingModel:
         )
 
         file_size_mb = save_path.stat().st_size / (1024 * 1024)
-        print(f"\n✓ Features saved to {save_path}")
+        print(f"\n Features saved to {save_path}")
         print(f"  File size: {file_size_mb:.2f} MB")
         print(f"  Speedup: ~{elapsed/10:.1f}x faster when loading from cache")
 
@@ -3356,7 +3356,7 @@ class TradingModel:
         self.scaler.scale_ = data['scaler_scale']
         self.sequence_length = int(data['sequence_length'])
 
-        print(f"✓ Loaded {len(X)} sequences from cache")
+        print(f" Loaded {len(X)} sequences from cache")
         print(f"  Feature dimensions: {X.shape}")
         print(f"  Skipping expensive feature computation...")
 
@@ -3420,8 +3420,8 @@ class TradingModel:
         accumulation_steps = 4
 
         if use_amp:
-            print(f"✓ Mixed precision training enabled")
-        print(f"✓ Gradient accumulation: effective batch size = {batch_size * accumulation_steps}\n")
+            print(f" Mixed precision training enabled")
+        print(f" Gradient accumulation: effective batch size = {batch_size * accumulation_steps}\n")
 
         # Training loop (simplified version)
         self.model.train()
@@ -3472,7 +3472,7 @@ class TradingModel:
                 print(f"Epoch [{epoch+1}/{epochs}] Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}, Val Acc: {val_accuracy:.4f}")
 
         self.is_trained = True
-        print(f"\n✓ Training from cache complete!\n")
+        print(f"\n Training from cache complete!\n")
 
     @timing_decorator
     def predict(self, recent_bars_df):
@@ -3497,7 +3497,7 @@ class TradingModel:
         if len(recent_bars_df) > min_bars_needed:
             # Use only the most recent bars needed for prediction
             df_subset = recent_bars_df.tail(min_bars_needed).reset_index(drop=True)
-            print(f"⚡ Fast path: Using {len(df_subset)} recent bars instead of {len(recent_bars_df)}")
+            print(f" Fast path: Using {len(df_subset)} recent bars instead of {len(recent_bars_df)}")
         else:
             df_subset = recent_bars_df
 
@@ -3552,7 +3552,7 @@ class TradingModel:
                     )
                     probabilities = calibrated_probs[0]
                 except Exception as e:
-                    print(f"⚠️  Calibration failed, using raw probabilities: {e}")
+                    print(f"WARNING:  Calibration failed, using raw probabilities: {e}")
                     probabilities = torch.softmax(outputs, dim=1)[0]
             else:
                 probabilities = torch.softmax(outputs, dim=1)[0]
@@ -3592,11 +3592,11 @@ class TradingModel:
 
             # DEBUG: Log raw confidence before boost
             raw_confidence = confidence
-            print(f"🔍 Raw confidence (before boost): {raw_confidence:.3f}")
+            print(f" Raw confidence (before boost): {raw_confidence:.3f}")
 
             # SAFETY CHECK: Catch zero confidence immediately
             if raw_confidence == 0.0:
-                print(f"❌ ZERO CONFIDENCE DETECTED!")
+                print(f" ZERO CONFIDENCE DETECTED!")
                 print(f"   prob_long={prob_long:.4f}, prob_short={prob_short:.4f}, prob_hold={prob_hold:.4f}")
                 print(f"   predicted_class={predicted_class}")
                 # Force to max probability
@@ -3632,17 +3632,17 @@ class TradingModel:
                     # Boost with-trend signals
                     if (is_uptrend and predicted_class == 2) or (is_downtrend and predicted_class == 0):
                         confidence = min(0.98, confidence * 1.10)  # 10% additional boost
-                        print(f"📈 TREND BOOST: Signal aligns with {('UP' if is_uptrend else 'DOWN')}TREND (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
+                        print(f" TREND BOOST: Signal aligns with {('UP' if is_uptrend else 'DOWN')}TREND (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
                     # Reduce counter-trend confidence
                     elif (is_uptrend and predicted_class == 0) or (is_downtrend and predicted_class == 2):
                         confidence = confidence * 0.85  # 15% penalty
-                        print(f"⚠️  COUNTER-TREND: Signal against trend, confidence reduced (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
+                        print(f"WARNING:  COUNTER-TREND: Signal against trend, confidence reduced (H={current_hurst:.3f}, slope={trend_slope*100:.3f}%)")
 
             if raw_confidence > 0:
                 boost_pct = (confidence/raw_confidence - 1)*100
             else:
                 boost_pct = 0
-            print(f"🔍 Final confidence (after boost): {confidence:.3f} (boost: {boost_pct:.1f}%)")
+            print(f" Final confidence (after boost): {confidence:.3f} (boost: {boost_pct:.1f}%)")
 
             # Handle NaN/inf in confidence (should not happen after checks above)
             if not isinstance(confidence, (int, float)) or math.isnan(confidence) or math.isinf(confidence):
@@ -3749,7 +3749,7 @@ class TradingModel:
 
         # Apply adaptive threshold filtering
         if confidence < adaptive_threshold:
-            print(f"⚠️  Confidence below adaptive threshold ({confidence*100:.1f}% < {adaptive_threshold*100:.1f}%)")
+            print(f"WARNING:  Confidence below adaptive threshold ({confidence*100:.1f}% < {adaptive_threshold*100:.1f}%)")
             signal = 'hold'
 
         print(f"Final Signal: {signal.upper()}")
@@ -3927,7 +3927,7 @@ class TradingModel:
             atr = 15.0  # Default fallback
 
         # DEBUG: Log ATR and data size
-        print(f"\n🔍 RISK CALCULATION DEBUG:")
+        print(f"\n RISK CALCULATION DEBUG:")
         print(f"   Historical bars: {len(recent_bars_df)}")
         print(f"   ATR: {atr:.2f} points")
         print(f"   Entry price: ${entry_price:.2f}")
@@ -4055,7 +4055,7 @@ class TradingModel:
             #             {torch.nn.LSTM, torch.nn.Linear},  # Quantize LSTM and Linear layers
             #             dtype=torch.qint8
             #         )
-            #         print("✓ Model quantized to INT8 for faster CPU inference")
+            #         print(" Model quantized to INT8 for faster CPU inference")
             #     except Exception as e:
             #         print(f"Note: Quantization not applied: {e}")
 

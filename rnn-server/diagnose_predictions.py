@@ -39,24 +39,24 @@ def check_health():
     """Check health endpoint"""
     data = make_request(f"{BASE_URL}/health-check")
     if data:
-        print(f"✓ Health check response:")
+        print(f" Health check response:")
         print(f"  Status: {data.get('status')}")
         print(f"  Model trained: {data.get('model_trained')}")
         print(f"  Device: {data.get('device')}")
     else:
-        print(f"✗ Health check failed")
+        print(f" Health check failed")
     return data
 
 def check_training_status():
     """Check training status"""
     data = make_request(f"{BASE_URL}/training-status")
     if data:
-        print(f"\n✓ Training status:")
+        print(f"\n Training status:")
         print(f"  Is training: {data.get('is_training')}")
         print(f"  Progress: {data.get('progress')}")
         print(f"  Error: {data.get('error')}")
     else:
-        print(f"\n✗ Training status check failed")
+        print(f"\n Training status check failed")
     return data
 
 def test_prediction(scenario_name, **params):
@@ -110,7 +110,7 @@ def test_prediction(scenario_name, **params):
                 print(f"  Contracts: {rm.get('contracts')}")
                 print(f"  Entry: ${rm.get('entry_price')}")
     else:
-        print(f"\n✗ Prediction request failed")
+        print(f"\n Prediction request failed")
 
     return data
 
@@ -122,7 +122,7 @@ def main():
     # Step 1: Check server
     print("\n1. Checking if server is running...")
     if not check_server():
-        print("✗ Server is not running!")
+        print(" Server is not running!")
         print("\n" + "="*70)
         print("SOLUTION:")
         print("="*70)
@@ -132,31 +132,31 @@ def main():
         print("\nThen run this diagnostic script again.")
         print("="*70)
         return
-    print("✓ Server is running")
+    print(" Server is running")
 
     # Step 2: Check health
     print("\n2. Checking server health...")
     health = check_health()
     if not health:
-        print("✗ Health check failed - server may be starting up")
+        print(" Health check failed - server may be starting up")
         print("Wait a few seconds and try again")
         return
 
     model_trained = health.get('model_trained')
     if not model_trained:
-        print("\n⚠️  WARNING: Health check shows model_trained = False")
+        print("\n  WARNING: Health check shows model_trained = False")
         print("This is the issue preventing predictions!")
 
     # Step 3: Check training status
     print("\n3. Checking training status...")
     training = check_training_status()
     if not training:
-        print("✗ Training status check failed")
+        print(" Training status check failed")
         return
 
     is_training = training.get('is_training')
     if is_training:
-        print("\n⚠️  WARNING: Model is currently training")
+        print("\n  WARNING: Model is currently training")
         print("Predictions are blocked during training")
         print(f"Progress: {training.get('progress')}")
 
@@ -195,18 +195,18 @@ def main():
     print(f"{'='*70}")
     
     if all(s == 'ok' for s in statuses):
-        print("\n✅ All tests passed! Predictions are working correctly.")
+        print("\n All tests passed! Predictions are working correctly.")
         print("\nYour NinjaTrader bot should be receiving predictions.")
         
     elif 'training' in statuses:
-        print("\n❌ ISSUE: Model is currently training")
+        print("\n ISSUE: Model is currently training")
         print("\nSOLUTION:")
         print("  Wait for training to complete.")
         print("  Monitor progress with:")
         print("    curl http://localhost:8000/training-status")
         
     elif 'not_trained' in statuses:
-        print("\n❌ ISSUE: Model shows as not trained")
+        print("\n ISSUE: Model shows as not trained")
         print(f"   Model file exists: {health.get('model_trained')}")
         print(f"   Is training: {is_training}")
         print(f"   Training progress: {training.get('progress')}")
@@ -220,20 +220,20 @@ def main():
         print("\n  3. If model was never trained, send historical data from NinjaTrader")
         
     elif 'max_loss_hit' in statuses:
-        print("\n❌ ISSUE: Daily max loss limit has been hit")
+        print("\n ISSUE: Daily max loss limit has been hit")
         print("\nSOLUTION:")
         print("  This is actually working correctly!")
         print("  The bot is protecting you from further losses.")
         print("  To test, use dailyPnL=0 in your requests.")
         
     elif 'ERROR' in statuses:
-        print("\n❌ ISSUE: Server errors during prediction")
+        print("\n ISSUE: Server errors during prediction")
         print("\nSOLUTION:")
         print("  Check the server terminal for error messages.")
         print("  Look for Python exceptions or tracebacks.")
         
     else:
-        print(f"\n❓ ISSUE: Unknown problem")
+        print(f"\n ISSUE: Unknown problem")
         print(f"   Statuses received: {statuses}")
         print("\nSOLUTION:")
         print("  Check server logs for errors")

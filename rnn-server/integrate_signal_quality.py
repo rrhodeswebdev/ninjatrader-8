@@ -270,7 +270,7 @@ class CombinedSignalFilter:
             result['reasons'].append(kelly_eval['reason'])
 
         # All filters passed
-        result['reasons'].insert(0, "✓ All filters passed")
+        result['reasons'].insert(0, " All filters passed")
 
         return result
 
@@ -310,7 +310,7 @@ class CombinedSignalFilter:
 
             # Update threshold
             self.min_confidence = result['optimal_threshold']
-            print(f"\n✓ Threshold updated to {self.min_confidence:.2%}")
+            print(f"\n Threshold updated to {self.min_confidence:.2%}")
         else:
             print(f"Threshold optimization: {result['status']}")
 
@@ -354,7 +354,7 @@ def example_integration():
     filtered_signal = signal
     if confidence < MIN_CONFIDENCE_THRESHOLD:
         filtered_signal = "hold"
-        print(f"Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()} → HOLD")
+        print(f"Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()}  HOLD")
 
     # NEW CODE:
     signal = trade_params['signal']
@@ -464,7 +464,7 @@ if __name__ == '__main__':
             test['confidence']
         )
 
-        print(f"  Decision: {'✓ TRADE' if result['should_trade'] else '✗ SKIP'}")
+        print(f"  Decision: {' TRADE' if result['should_trade'] else ' SKIP'}")
         print(f"  Filters passed: {', '.join(result['filters_passed'])}")
         if result['filters_failed']:
             print(f"  Filters failed: {', '.join(result['filters_failed'])}")

@@ -20,9 +20,9 @@ try:
     from features.order_flow import OrderFlowFeatures
     from confidence_scoring import AdvancedConfidenceScoring
     NEW_FEATURES_AVAILABLE = True
-    print("✅ New feature modules loaded successfully")
+    print(" New feature modules loaded successfully")
 except ImportError as e:
-    print(f"⚠️  Could not load new features: {e}")
+    print(f"  Could not load new features: {e}")
     NEW_FEATURES_AVAILABLE = False
 
 
@@ -37,10 +37,10 @@ def extract_all_new_features(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with all new features added
     """
     if not NEW_FEATURES_AVAILABLE:
-        print("⚠️  New features not available, returning original data")
+        print("  New features not available, returning original data")
         return df
 
-    print("🔧 Extracting new price action features...")
+    print(" Extracting new price action features...")
 
     # Make a copy
     df_enhanced = df.copy()
@@ -74,7 +74,7 @@ def extract_all_new_features(df: pd.DataFrame) -> pd.DataFrame:
     # Replace inf with 0
     df_enhanced = df_enhanced.replace([np.inf, -np.inf], 0)
 
-    print(f"✅ Added {len(df_enhanced.columns) - len(df.columns)} new features")
+    print(f" Added {len(df_enhanced.columns) - len(df.columns)} new features")
 
     return df_enhanced
 
@@ -225,12 +225,12 @@ def patch_model_class():
     """
     Patch the existing TradingModel class to use new features
     """
-    print("🔧 Patching TradingModel class...")
+    print(" Patching TradingModel class...")
 
     # This would require modifying model.py
     # For now, we'll create wrapper functions
 
-    print("✅ Patch complete - use wrapper functions")
+    print(" Patch complete - use wrapper functions")
 
 
 if __name__ == "__main__":
@@ -279,4 +279,4 @@ if __name__ == "__main__":
             for k, v in components.items():
                 print(f"  {k}: {v:.1f}")
     else:
-        print("❌ New features not available - cannot run test")
+        print(" New features not available - cannot run test")

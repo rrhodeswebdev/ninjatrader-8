@@ -25,7 +25,7 @@ def calculate_triple_barrier_labels(df: pd.DataFrame,
     """
     Triple Barrier Method for Label Generation
 
-    From "Advances in Financial Machine Learning" by Marcos López de Prado
+    From "Advances in Financial Machine Learning" by Marcos Lpez de Prado
 
     Creates labels based on which barrier is hit first:
     - Upper barrier (profit target): Label as LONG/SHORT (depending on direction)
@@ -412,4 +412,4 @@ if __name__ == '__main__':
     labels_multi, horizons = calculate_multi_horizon_labels(df)
     analyze_label_distribution(labels_multi)
 
-    print("\n✓ All label generation methods working correctly")
+    print("\n All label generation methods working correctly")

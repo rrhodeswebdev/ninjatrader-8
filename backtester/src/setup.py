@@ -28,7 +28,8 @@ setup(
         'python-dateutil>=2.8.2',
         'pytz>=2021.3',
         'requests>=2.27.1',
-        'urllib3>=2.0.0'
+        'urllib3>=2.0.0',
+        'ta>=0.11.0'
         ],
     classifiers = [
         "Programming Language :: Python",

@@ -44,7 +44,7 @@ def test_model_performance():
     # Generate test data
     print("\n1. Generating test data (5000 bars)...")
     df = generate_test_data(5000)
-    print(f"   ✓ Generated {len(df)} bars")
+    print(f"    Generated {len(df)} bars")
 
     # Initialize model
     print("\n2. Initializing optimized model...")
@@ -55,8 +55,8 @@ def test_model_performance():
         print("   ! Model not trained yet - training on test data...")
         model.train(df, epochs=10, batch_size=32)
     else:
-        print(f"   ✓ Model loaded from {model.model_path}")
-        print(f"   ✓ Device: {model.device}")
+        print(f"    Model loaded from {model.model_path}")
+        print(f"    Device: {model.device}")
 
     # Test prediction speed
     print("\n3. Testing prediction performance...")
@@ -133,12 +133,12 @@ def test_model_performance():
     if model.device.type == 'cpu':
         # Check if model is quantized by looking for quantized layers
         is_quantized = any('Quantized' in str(type(m)) for m in model.model.modules())
-        print(f"INT8 Quantization (CPU): {'✓ ACTIVE' if is_quantized else '✗ NOT ACTIVE'}")
+        print(f"INT8 Quantization (CPU): {' ACTIVE' if is_quantized else ' NOT ACTIVE'}")
     else:
-        print(f"FP16 Inference (GPU):    ✓ ACTIVE")
+        print(f"FP16 Inference (GPU):     ACTIVE")
 
-    print(f"Hurst Caching:           ✓ ACTIVE (cache size: {len(model._hurst_cache)})")
-    print(f"Timing Instrumentation:  ✓ ACTIVE")
+    print(f"Hurst Caching:            ACTIVE (cache size: {len(model._hurst_cache)})")
+    print(f"Timing Instrumentation:   ACTIVE")
 
     # Performance target
     print("\n" + "="*60)
@@ -147,10 +147,10 @@ def test_model_performance():
 
     target_latency = 150  # ms
     if avg_latency < target_latency:
-        print(f"✅ PASS: Average latency {avg_latency:.1f}ms < {target_latency}ms target")
+        print(f" PASS: Average latency {avg_latency:.1f}ms < {target_latency}ms target")
         print("   Model is fast enough for real-time trading!")
     else:
-        print(f"⚠️  MARGINAL: Average latency {avg_latency:.1f}ms > {target_latency}ms target")
+        print(f"  MARGINAL: Average latency {avg_latency:.1f}ms > {target_latency}ms target")
         print("   Model may struggle with high-frequency updates")
 
     print("\n" + "="*60)

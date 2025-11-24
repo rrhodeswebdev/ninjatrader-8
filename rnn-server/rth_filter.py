@@ -54,7 +54,7 @@ def filter_rth_data(df: pd.DataFrame, time_column: str = 'time') -> pd.DataFrame
     rth_bars = len(df_rth)
     rth_percentage = (rth_bars / original_bars * 100) if original_bars > 0 else 0
 
-    print(f"\n📊 RTH Filter Statistics:")
+    print(f"\n RTH Filter Statistics:")
     print(f"   Original bars: {original_bars:,}")
     print(f"   RTH bars: {rth_bars:,}")
     print(f"   RTH percentage: {rth_percentage:.1f}%")
@@ -107,7 +107,7 @@ def add_session_label(df: pd.DataFrame, time_column: str = 'time') -> pd.DataFra
     rth_count = (df['session'] == 'RTH').sum()
     eth_count = (df['session'] == 'ETH').sum()
 
-    print(f"\n📊 Session Distribution:")
+    print(f"\n Session Distribution:")
     print(f"   RTH bars: {rth_count:,} ({rth_count/len(df)*100:.1f}%)")
     print(f"   ETH bars: {eth_count:,} ({eth_count/len(df)*100:.1f}%)")
 
@@ -119,35 +119,35 @@ def get_rth_hours_info():
     Print information about RTH hours for ES futures.
     """
     info = """
-    ╔══════════════════════════════════════════════════════════════╗
-    ║           ES E-mini S&P 500 Futures Trading Hours            ║
-    ╠══════════════════════════════════════════════════════════════╣
-    ║ RTH (Regular Trading Hours):                                 ║
-    ║   • 9:30 AM - 4:00 PM Eastern Time                          ║
-    ║   • 6:30 AM - 1:00 PM Pacific Time                          ║
-    ║   • Monday - Friday                                          ║
-    ║   • 6.5 hours per day                                        ║
-    ║                                                              ║
-    ║ ETH (Extended/Electronic Trading Hours):                     ║
-    ║   • Sunday 6:00 PM - Monday 9:30 AM ET (open)               ║
-    ║   • Monday 4:00 PM - Tuesday 9:30 AM ET (overnight)         ║
-    ║   • ... continues through the week                           ║
-    ║   • Friday 4:00 PM - Sunday 6:00 PM (weekend close)         ║
-    ║                                                              ║
-    ║ RTH Characteristics:                                         ║
-    ║   ✓ Higher volume & liquidity                               ║
-    ║   ✓ Tighter bid-ask spreads                                 ║
-    ║   ✓ More institutional participation                         ║
-    ║   ✓ Economic news releases (8:30 AM, 10:00 AM ET typical)  ║
-    ║   ✓ More predictable price action                           ║
-    ║                                                              ║
-    ║ ETH Characteristics:                                         ║
-    ║   • Lower volume                                             ║
-    ║   • Wider spreads                                            ║
-    ║   • More retail participation                                ║
-    ║   • Gaps at session opens                                    ║
-    ║   • Can be more erratic                                      ║
-    ╚══════════════════════════════════════════════════════════════╝
+    
+               ES E-mini S&P 500 Futures Trading Hours            
+    
+     RTH (Regular Trading Hours):                                 
+        9:30 AM - 4:00 PM Eastern Time                          
+        6:30 AM - 1:00 PM Pacific Time                          
+        Monday - Friday                                          
+        6.5 hours per day                                        
+                                                                  
+     ETH (Extended/Electronic Trading Hours):                     
+        Sunday 6:00 PM - Monday 9:30 AM ET (open)               
+        Monday 4:00 PM - Tuesday 9:30 AM ET (overnight)         
+        ... continues through the week                           
+        Friday 4:00 PM - Sunday 6:00 PM (weekend close)         
+                                                                  
+     RTH Characteristics:                                         
+        Higher volume & liquidity                               
+        Tighter bid-ask spreads                                 
+        More institutional participation                         
+        Economic news releases (8:30 AM, 10:00 AM ET typical)  
+        More predictable price action                           
+                                                                  
+     ETH Characteristics:                                         
+        Lower volume                                             
+        Wider spreads                                            
+        More retail participation                                
+        Gaps at session opens                                    
+        Can be more erratic                                      
+    
     """
     print(info)
 
@@ -184,4 +184,4 @@ if __name__ == '__main__':
     # Add session labels
     df_labeled = add_session_label(df_test.copy())
 
-    print("\n✓ RTH filter test complete")
+    print("\n RTH filter test complete")

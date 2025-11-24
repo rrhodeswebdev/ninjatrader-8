@@ -205,7 +205,7 @@ class ConfidenceIntervalEstimator:
 
         prediction = float(model(features).item())
 
-        # Simple heuristic: ±10% around prediction
+        # Simple heuristic: 10% around prediction
         margin = 0.1
         lower = max(0.0, prediction - margin)
         upper = min(1.0, prediction + margin)

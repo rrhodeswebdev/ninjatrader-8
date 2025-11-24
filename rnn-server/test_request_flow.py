@@ -33,12 +33,12 @@ def test_endpoint(name, url, method='GET', data=None):
 
         with urllib.request.urlopen(req, timeout=10) as response:
             result = json.loads(response.read().decode('utf-8'))
-            print(f"\n✓ SUCCESS")
+            print(f"\n SUCCESS")
             print(f"Response: {json.dumps(result, indent=2)}")
             return True, result
 
     except urllib.error.HTTPError as e:
-        print(f"\n✗ HTTP ERROR {e.code}")
+        print(f"\n HTTP ERROR {e.code}")
         try:
             error_body = e.read().decode('utf-8')
             print(f"Error body: {error_body}")
@@ -47,14 +47,14 @@ def test_endpoint(name, url, method='GET', data=None):
         return False, None
 
     except urllib.error.URLError as e:
-        print(f"\n✗ CONNECTION ERROR")
+        print(f"\n CONNECTION ERROR")
         print(f"Error: {e.reason}")
-        print("\n⚠️  Server is not running!")
+        print("\n  Server is not running!")
         print("Start server with: cd rnn-server && uv run fastapi dev main.py")
         return False, None
 
     except Exception as e:
-        print(f"\n✗ UNEXPECTED ERROR")
+        print(f"\n UNEXPECTED ERROR")
         print(f"Error: {e}")
         return False, None
 

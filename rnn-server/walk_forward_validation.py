@@ -247,7 +247,7 @@ class WalkForwardValidator:
         for col in metric_cols:
             mean_val = results_df[col].mean()
             std_val = results_df[col].std()
-            print(f"  {col:15s}: {mean_val:.4f} ± {std_val:.4f}")
+            print(f"  {col:15s}: {mean_val:.4f}  {std_val:.4f}")
 
         print("\n" + "="*80 + "\n")
 

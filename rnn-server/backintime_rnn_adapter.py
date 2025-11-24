@@ -38,8 +38,11 @@ try:
     from backintime.data.csv import CSVCandlesFactory, CSVCandlesSchema
     from backintime.timeframes import Timeframes as tf
     from backintime.utils import PREFETCH_SINCE
-    from backintime.strategy import FuturesStrategy
-    from backintime.broker import OrderSide
+    from backintime import FuturesStrategy
+    from backintime.broker import (
+        OrderSide, LimitOrderOptions, TakeProfitOptions, StopLossOptions
+    )
+    from backintime.indicators import ATR
     BACKINTIME_AVAILABLE = True
 except ImportError:
     BACKINTIME_AVAILABLE = False
@@ -47,7 +50,7 @@ except ImportError:
     class FuturesStrategy:
         """Dummy base class when backintime is not available"""
         pass
-    print("⚠️  backintime not installed - adapter functionality limited")
+    print("WARNING: backintime not installed - adapter functionality limited")
 
 from model import TradingModel
 
@@ -60,15 +63,24 @@ class RNNFuturesStrategy(FuturesStrategy):
     method on each tick to generate trading signals.
     """
 
-    def __init__(self, model: TradingModel, atr_multiplier: float = 2.0):
+    # Define as class attributes (not properties)
+    candle_timeframes = {tf.M1}
+    indicators = {
+        ATR(tf.M1, period=14)  # ATR for dynamic stops
+    }
+
+    def __init__(self, model: TradingModel, atr_multiplier: float = 2.0,
+                 broker_proxy=None, analyser=None, candles=None):
         """
         Initialize RNN strategy.
 
         Args:
             model: Trained TradingModel instance
             atr_multiplier: ATR multiplier for stop loss/take profit (default: 2.0)
+            broker_proxy: backintime broker proxy (passed by framework)
+            analyser: backintime analyser (passed by framework)
+            candles: backintime candles buffer (passed by framework)
         """
-        super().__init__()
         self.model = model
         self.atr_multiplier = atr_multiplier
         self.historical_data = []
@@ -79,20 +91,13 @@ class RNNFuturesStrategy(FuturesStrategy):
         self.tick_size = 0.25
         self.point_value = 50.0
 
-    @property
-    def indicators(self):
-        """Define indicators needed for RNN model"""
-        # ATR is needed for dynamic stops
-        return [
-            ('atr', tf.M1, {'period': 14})
-        ]
+        # Call parent init with backintime's expected arguments
+        if broker_proxy is not None and analyser is not None and candles is not None:
+            super().__init__(broker_proxy, analyser, candles)
+        else:
+            super().__init__()
 
-    @property
-    def candle_timeframes(self):
-        """Define candle timeframes to track"""
-        return [tf.M1]
-
-    def tick(self, candle):
+    def tick(self):
         """
         Called on each new candle close.
 
@@ -101,6 +106,9 @@ class RNNFuturesStrategy(FuturesStrategy):
         2. Get RNN prediction
         3. Execute trades based on prediction
         """
+        # Get current candle from backintime
+        candle = self.candles.get(tf.M1)
+
         # Build historical DataFrame
         current_bar = {
             'time': candle.open_time,
@@ -127,40 +135,61 @@ class RNNFuturesStrategy(FuturesStrategy):
             print(f"Prediction error: {e}")
             return
 
-        # Get current ATR for risk management
-        atr = self.get_indicator('atr', tf.M1)
-        if atr is None or atr <= 0:
+        # Get current ATR for risk management using backintime's analyser
+        atr_values = self.analyser.atr(tf.M1, period=14)
+        if atr_values is None or len(atr_values) == 0:
             atr = 15.0  # Default fallback
+        else:
+            atr = float(atr_values[-1])
 
         current_price = float(candle.close)
 
-        # Check if we have an open position
-        has_position = len(self.broker.get_active_orders()) > 0
+        # Check if we have funds to trade
+        if not self.broker.max_funds_for_futures:
+            return
 
         # Only trade on strong signals with high confidence
-        if signal == 'long' and confidence > 0.55 and not has_position:
+        if signal == 'long' and confidence > 0.55 and not self.broker.in_long:
             # Calculate stops
-            stop_loss = current_price - (atr * self.atr_multiplier)
-            take_profit = current_price + (atr * self.atr_multiplier * 1.5)  # 1.5:1 RR
+            stop_loss = Decimal(str(current_price - (atr * self.atr_multiplier)))
+            take_profit = Decimal(str(current_price + (atr * self.atr_multiplier * 1.5)))  # 1.5:1 RR
 
-            # Enter long position
-            self.broker.buy(
-                quantity=self.max_position_size,
-                stop_loss=Decimal(str(stop_loss)),
-                take_profit=Decimal(str(take_profit))
+            # Enter long position using limit order (at current price ~ market order)
+            order = LimitOrderOptions(
+                order_side=OrderSide.BUY,
+                order_price=Decimal(str(current_price)),
+                percentage_amount=Decimal('100'),
+                take_profit=TakeProfitOptions(
+                    percentage_amount=Decimal('100'),
+                    trigger_price=take_profit
+                ),
+                stop_loss=StopLossOptions(
+                    percentage_amount=Decimal('100'),
+                    trigger_price=stop_loss
+                )
             )
+            self.broker.submit_limit_order(order)
 
-        elif signal == 'short' and confidence > 0.55 and not has_position:
+        elif signal == 'short' and confidence > 0.55 and not self.broker.in_short:
             # Calculate stops
-            stop_loss = current_price + (atr * self.atr_multiplier)
-            take_profit = current_price - (atr * self.atr_multiplier * 1.5)  # 1.5:1 RR
+            stop_loss = Decimal(str(current_price + (atr * self.atr_multiplier)))
+            take_profit = Decimal(str(current_price - (atr * self.atr_multiplier * 1.5)))  # 1.5:1 RR
 
-            # Enter short position
-            self.broker.sell(
-                quantity=self.max_position_size,
-                stop_loss=Decimal(str(stop_loss)),
-                take_profit=Decimal(str(take_profit))
+            # Enter short position using limit order (at current price ~ market order)
+            order = LimitOrderOptions(
+                order_side=OrderSide.SELL,
+                order_price=Decimal(str(current_price)),
+                percentage_amount=Decimal('100'),
+                take_profit=TakeProfitOptions(
+                    percentage_amount=Decimal('100'),
+                    trigger_price=take_profit
+                ),
+                stop_loss=StopLossOptions(
+                    percentage_amount=Decimal('100'),
+                    trigger_price=stop_loss
+                )
             )
+            self.broker.submit_limit_short(order)
 
 
 def convert_rnn_data_to_backintime_format(
@@ -181,7 +210,7 @@ def convert_rnn_data_to_backintime_format(
     Returns:
         Path to converted file
     """
-    print(f"\n📊 Converting data format...")
+    print(f"\n Converting data format...")
     print(f"  Input:  {input_file}")
     print(f"  Output: {output_file}")
 
@@ -207,10 +236,55 @@ def convert_rnn_data_to_backintime_format(
     # Save
     df_backintime.to_csv(output_file, index=False, header=False)
 
-    print(f"  ✓ Converted {len(df_backintime)} bars")
+    print(f"   Converted {len(df_backintime)} bars")
     print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
 
     return output_file
+
+
+def _parse_date_local_tz(date_str: str, timezone: str = 'UTC') -> datetime:
+    """
+    Parse date string assuming it's already in the target timezone.
+
+    This differs from backintime's default _parse_date which assumes dates are UTC.
+    Our CSV dates are already in local time (e.g., America/New_York).
+
+    Returns timezone-naive datetime to match backintime's internal expectations.
+    """
+    # Parse as timezone-naive and return as-is
+    dt = pd.to_datetime(date_str)
+    return dt.to_pydatetime()
+
+
+def _parse_date_utc_to_local(date_str: str, timezone: str = 'UTC') -> datetime:
+    """
+    Parse date string assuming it's in UTC, then convert to target timezone.
+
+    This is backintime's default behavior - assumes CSV timestamps are UTC
+    and converts them to the specified local timezone.
+
+    Args:
+        date_str: Timestamp string to parse
+        timezone: Target timezone to convert to (e.g., 'America/New_York')
+
+    Returns:
+        Timezone-naive datetime in the target timezone
+    """
+    import pytz
+
+    # Parse as UTC
+    dt = pd.to_datetime(date_str)
+
+    # Localize as UTC if not already timezone-aware
+    if dt.tzinfo is None:
+        dt = dt.tz_localize('UTC')
+
+    # Convert to target timezone
+    target_tz = pytz.timezone(timezone)
+    dt_local = dt.tz_convert(target_tz)
+
+    # Return timezone-naive (backintime expects naive datetimes)
+    return dt_local.tz_localize(None).to_pydatetime()
 
 
 def run_rnn_backtest(
@@ -223,7 +297,8 @@ def run_rnn_backtest(
     session_start: timedelta = timedelta(hours=9, minutes=30),
     session_end: timedelta = timedelta(hours=16, minutes=0),
     session_timezone: str = 'America/New_York',
-    results_dir: str = None
+    results_dir: str = None,
+    assume_utc: bool = False
 ) -> t.Any:
     """
     Run RNN strategy backtest using backintime framework.
@@ -235,10 +310,12 @@ def run_rnn_backtest(
         until: End datetime for backtest
         initial_capital: Starting capital (default: $10,000)
         atr_multiplier: ATR multiplier for stops (default: 2.0)
-        session_start: Trading session start time
-        session_end: Trading session end time
-        session_timezone: Timezone for session
+        session_start: Trading session start time (default: 9:30 AM for stocks)
+        session_end: Trading session end time (default: 4:00 PM for stocks)
+        session_timezone: Timezone for session (default: America/New_York)
         results_dir: Directory to save results (optional)
+        assume_utc: If True, CSV timestamps are treated as UTC and converted to session_timezone.
+                    If False, timestamps are assumed to already be in session_timezone (default: False)
 
     Returns:
         Backtest results object from backintime
@@ -273,32 +350,45 @@ def run_rnn_backtest(
         low=3, close=4, volume=5, close_time=6
     )
 
+    # Select appropriate date parser based on timestamp format
+    if assume_utc:
+        # CSV timestamps are UTC - convert to session timezone
+        date_parser = _parse_date_utc_to_local
+        print(f"Timestamp mode: UTC -> {session_timezone} conversion")
+    else:
+        # CSV timestamps are already in session timezone
+        date_parser = _parse_date_local_tz
+        print(f"Timestamp mode: Local ({session_timezone}) - no conversion")
+
     feed = CSVCandlesFactory(
         data_file, 'ESNQ',  # ES or NQ futures
         tf.M1,
         delimiter=',',
         schema=schema,
-        timezone=session_timezone
+        timezone=session_timezone,
+        date_parser=date_parser
     )
 
-    # Setup trading session
+    # Setup trading session (Stock market hours: Mon-Fri 9:30 AM - 4:00 PM ET)
     session = FuturesSession(
         session_start=session_start,
         session_end=session_end,
         session_timezone=session_timezone,
-        overnight_start=session_end,
-        overnight_end=session_start,
+        overnight_start=session_end,  # 4:00 PM
+        overnight_end=session_start,  # 9:30 AM
         overnight_timezone=session_timezone,
         non_working_weekdays={5, 6}  # Saturday, Sunday
     )
 
-    # Create strategy instance
-    def create_strategy():
-        return RNNFuturesStrategy(model=model, atr_multiplier=atr_multiplier)
+    # Create strategy class with parameters baked in
+    class ParameterizedRNNStrategy(RNNFuturesStrategy):
+        def __init__(self, broker_proxy, analyser, candles):
+            super().__init__(model=model, atr_multiplier=atr_multiplier,
+                           broker_proxy=broker_proxy, analyser=analyser, candles=candles)
 
     # Run backtest
     result = run_backtest(
-        create_strategy,
+        ParameterizedRNNStrategy,
         feed,
         initial_capital,
         since,
@@ -327,11 +417,16 @@ def run_rnn_backtest(
         results_path = Path(results_dir)
         results_path.mkdir(parents=True, exist_ok=True)
 
-        result.export_stats(str(results_path))
+        try:
+            result.export_stats(str(results_path))
+        except (AttributeError, TypeError) as e:
+            # Handle case where there are no completed trades
+            print(f"  WARNING: Could not export stats (possibly no completed trades): {e}")
+
         result.export_orders(str(results_path))
         result.export_trades(str(results_path))
 
-        print(f"✓ Results exported to {results_path}")
+        print(f" Results exported to {results_path}")
 
     return result
 
@@ -365,12 +460,24 @@ if __name__ == '__main__':
         'backintime_data.csv'
     )
 
-    # 3. Run backtest
+    # 3. Run backtest with local timestamps (default)
     results = run_rnn_backtest(
         model=model,
         data_file='backintime_data.csv',
         since=datetime(2024, 1, 1, 9, 30),
         until=datetime(2024, 3, 1, 16, 0),
-        initial_capital=25000.0
+        initial_capital=25000.0,
+        assume_utc=False  # Timestamps are already in America/New_York
+    )
+
+    # Or with UTC timestamps (converts to session timezone)
+    results = run_rnn_backtest(
+        model=model,
+        data_file='backintime_data_utc.csv',
+        since=datetime(2024, 1, 1, 14, 30),  # 9:30 AM ET in UTC
+        until=datetime(2024, 3, 1, 21, 0),   # 4:00 PM ET in UTC
+        initial_capital=25000.0,
+        session_timezone='America/New_York',
+        assume_utc=True  # Timestamps are UTC, convert to ET
     )
     """)

@@ -80,7 +80,7 @@ class DataLoader:
         # Remove any NaN rows
         df = df.dropna()
 
-        print(f"✓ Loaded {len(df)} bars from {file_path.name}")
+        print(f" Loaded {len(df)} bars from {file_path.name}")
         print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
         print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
 
@@ -125,7 +125,7 @@ class DataLoader:
         # Save
         df_out.to_csv(output_path, index=False)
 
-        print(f"✓ Saved RNN format data to {output_path}")
+        print(f" Saved RNN format data to {output_path}")
         print(f"  {len(df_out)} bars")
 
         return str(output_path)
@@ -167,7 +167,7 @@ class DataLoader:
         # Save without header
         df_out.to_csv(output_path, index=False, header=False)
 
-        print(f"✓ Saved backintime format data to {output_path}")
+        print(f" Saved backintime format data to {output_path}")
         print(f"  {len(df_out)} bars")
 
         return str(output_path)
@@ -198,7 +198,7 @@ class DataLoader:
         val_df = df.iloc[train_size:train_size + val_size].copy()
         test_df = df.iloc[train_size + val_size:].copy()
 
-        print(f"\n📊 Data Split:")
+        print(f"\n Data Split:")
         print(f"  Training:   {len(train_df):5d} bars ({train_df['time'].min()} to {train_df['time'].max()})")
         print(f"  Validation: {len(val_df):5d} bars ({val_df['time'].min()} to {val_df['time'].max()})")
         print(f"  Test:       {len(test_df):5d} bars ({test_df['time'].min()} to {test_df['time'].max()})")
@@ -245,7 +245,7 @@ class DataLoader:
         if exclude_weekends:
             df_filtered = df_filtered[df_filtered['time'].dt.dayofweek < 5]
 
-        print(f"✓ Filtered to trading hours ({start_time}-{end_time})")
+        print(f" Filtered to trading hours ({start_time}-{end_time})")
         print(f"  {len(df_filtered)} bars remaining (from {len(df)})")
 
         return df_filtered
@@ -273,7 +273,7 @@ class DataLoader:
             'volume': 'sum'
         }).dropna().reset_index()
 
-        print(f"✓ Resampled to {target_timeframe}")
+        print(f" Resampled to {target_timeframe}")
         print(f"  {len(df_resampled)} bars (from {len(df)})")
 
         return df_resampled
@@ -343,9 +343,15 @@ def compare_backtest_results(
     # Build comparison DataFrame
     metrics = []
 
-    # Helper to safely get values
+    # Helper to safely get values from dict or object
     def safe_get(d, key, default=0):
-        return d.get(key, default) if d else default
+        if d is None:
+            return default
+        # If it's a dict, use .get()
+        if hasattr(d, 'get'):
+            return d.get(key, default)
+        # Otherwise try getattr for objects
+        return getattr(d, key, default)
 
     # Trade Statistics
     metrics.append({
@@ -431,12 +437,16 @@ def compare_backtest_results(
         rnn_val = df_comparison.loc[i, 'RNN Backtester']
         bt_val = df_comparison.loc[i, 'backintime']
 
+        # Convert to float to handle Decimal types from backintime
+        rnn_val = float(rnn_val) if rnn_val is not None else 0
+        bt_val = float(bt_val) if bt_val is not None else 0
+
         if rnn_val != 0:
             diff_pct = ((bt_val - rnn_val) / abs(rnn_val)) * 100
             df_comparison.loc[i, 'Difference'] = diff_pct
 
     if verbose:
-        print("\n📊 Metric Comparison:")
+        print("\n Metric Comparison:")
         print(df_comparison.to_string(index=False))
 
         print("\n" + "="*70)
@@ -446,28 +456,28 @@ def compare_backtest_results(
         # Analyze key differences
         total_pnl_diff = safe_get(rnn_results, 'total_pnl', 0) - safe_get(bt_stats, 'total_pnl', 0)
 
-        print(f"\n💰 P&L Impact:")
+        print(f"\n P&L Impact:")
         print(f"  RNN Backtester P&L:  ${safe_get(rnn_results, 'total_pnl', 0):>10,.2f}")
         print(f"  backintime P&L:      ${safe_get(bt_stats, 'total_pnl', 0):>10,.2f}")
         print(f"  Difference:          ${total_pnl_diff:>10,.2f}")
 
         if total_pnl_diff > 0:
-            print(f"\n  ⚠️  backintime shows LOWER P&L (more realistic)")
+            print(f"\n    backintime shows LOWER P&L (more realistic)")
             print(f"     Impact of realistic execution: ${abs(total_pnl_diff):.2f}")
         elif total_pnl_diff < 0:
-            print(f"\n  ⚠️  backintime shows HIGHER P&L")
+            print(f"\n    backintime shows HIGHER P&L")
             print(f"     Possible better fill prices: ${abs(total_pnl_diff):.2f}")
 
-        print(f"\n📈 Risk Metrics:")
+        print(f"\n Risk Metrics:")
         sharpe_rnn = safe_get(rnn_results, 'sharpe_ratio', 0)
         sharpe_bt = safe_get(bt_stats, 'sharpe_ratio', 0)
         print(f"  RNN Sharpe:     {sharpe_rnn:>8.2f}")
         print(f"  backintime Sharpe: {sharpe_bt:>8.2f}")
 
         if sharpe_bt < sharpe_rnn:
-            print(f"  ⚠️  Lower Sharpe in backintime (realistic execution impact)")
+            print(f"    Lower Sharpe in backintime (realistic execution impact)")
         else:
-            print(f"  ✓ Similar or better Sharpe in backintime")
+            print(f"   Similar or better Sharpe in backintime")
 
         print("\n" + "="*70)
         print("KEY INSIGHTS")
@@ -478,48 +488,48 @@ def compare_backtest_results(
         # Trade count difference
         trades_diff = abs(safe_get(rnn_results, 'total_trades', 0) - safe_get(bt_stats, 'total_trades', 0))
         if trades_diff > 0:
-            insights.append(f"  • Trade count differs by {trades_diff} - may be due to margin constraints or session handling")
+            insights.append(f"   Trade count differs by {trades_diff} - may be due to margin constraints or session handling")
 
         # Performance degradation
         if total_pnl_diff > 100:
-            insights.append(f"  • Significant P&L impact (${total_pnl_diff:.2f}) from realistic execution")
+            insights.append(f"   Significant P&L impact (${total_pnl_diff:.2f}) from realistic execution")
 
         # Sharpe impact
         sharpe_diff = abs(sharpe_rnn - sharpe_bt)
         if sharpe_diff > 0.3:
-            insights.append(f"  • Sharpe ratio differs significantly ({sharpe_diff:.2f}) - execution quality matters")
+            insights.append(f"   Sharpe ratio differs significantly ({sharpe_diff:.2f}) - execution quality matters")
 
         # Win rate impact
-        wr_rnn = safe_get(rnn_results, 'win_rate', 0)
-        wr_bt = safe_get(bt_stats, 'win_rate', 0)
+        wr_rnn = float(safe_get(rnn_results, 'win_rate', 0))
+        wr_bt = float(safe_get(bt_stats, 'win_rate', 0))
         wr_diff = abs(wr_rnn - wr_bt)
         if wr_diff > 0.05:
-            insights.append(f"  • Win rate differs by {wr_diff*100:.1f}% - realistic fills affect outcomes")
+            insights.append(f"   Win rate differs by {wr_diff*100:.1f}% - realistic fills affect outcomes")
 
         if insights:
             print("\n".join(insights))
         else:
-            print("  • Results are similar between both approaches")
-            print("  • Good agreement suggests robust strategy")
+            print("   Results are similar between both approaches")
+            print("   Good agreement suggests robust strategy")
 
         print("\n" + "="*70)
         print("RECOMMENDATIONS")
         print("="*70)
 
         if safe_get(bt_stats, 'sharpe_ratio', 0) > 1.0:
-            print("  ✅ backintime results look strong - strategy validated")
-            print("     → Consider live paper trading")
+            print("   backintime results look strong - strategy validated")
+            print("      Consider live paper trading")
         elif safe_get(bt_stats, 'sharpe_ratio', 0) > 0.5:
-            print("  ⚠️  backintime results are marginal")
-            print("     → Optimize risk parameters before live trading")
+            print("    backintime results are marginal")
+            print("      Optimize risk parameters before live trading")
         else:
-            print("  ❌ backintime results are weak")
-            print("     → Strategy needs improvement before deployment")
+            print("   backintime results are weak")
+            print("      Strategy needs improvement before deployment")
 
         if total_pnl_diff > safe_get(rnn_results, 'total_pnl', 0) * 0.3:
-            print("\n  ⚠️  Large execution impact (>30%)")
-            print("     → Focus on entry timing and limit orders")
-            print("     → Review slippage assumptions")
+            print("\n    Large execution impact (>30%)")
+            print("      Focus on entry timing and limit orders")
+            print("      Review slippage assumptions")
 
         print("\n" + "="*70)
 

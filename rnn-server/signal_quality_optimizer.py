@@ -9,7 +9,7 @@ Advanced techniques to reduce signal frequency and improve signal quality throug
 5. Precision-recall optimization for optimal trade-off
 
 Based on quantitative finance principles from:
-- Advances in Financial Machine Learning (Marcos López de Prado)
+- Advances in Financial Machine Learning (Marcos Lpez de Prado)
 - Evidence-Based Technical Analysis (David Aronson)
 - Quantitative Trading (Ernest Chan)
 """
@@ -579,7 +579,7 @@ if __name__ == '__main__':
 
     for conf in confidence_levels:
         should_trade, kelly, reason = kelly_filter.should_trade(conf)
-        status = "✓ TRADE" if should_trade else "✗ SKIP"
+        status = " TRADE" if should_trade else " SKIP"
         print(f"Confidence {conf:.2f}: {status} - {reason}")
 
     # Test 3: Information Coefficient

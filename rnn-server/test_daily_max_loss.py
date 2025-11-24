@@ -100,10 +100,10 @@ def test_daily_max_loss():
             signal_correct = (signal != 'hold') == test_case['should_trade']
 
             if status_match:
-                print(f"   ✅ Status: {status}")
+                print(f"    Status: {status}")
                 passed += 1
             else:
-                print(f"   ❌ Status: {status} (expected: {test_case['expected_status']})")
+                print(f"    Status: {status} (expected: {test_case['expected_status']})")
                 failed += 1
 
             print(f"   Signal: {signal.upper()}")
@@ -115,7 +115,7 @@ def test_daily_max_loss():
                 print(f"   Message: {result.get('message')}")
 
         except Exception as e:
-            print(f"   ❌ ERROR: {e}")
+            print(f"    ERROR: {e}")
             failed += 1
 
         print()
@@ -125,13 +125,13 @@ def test_daily_max_loss():
     print("TEST SUMMARY")
     print("="*70)
     print(f"Total Tests: {len(test_cases)}")
-    print(f"Passed: {passed} ✅")
-    print(f"Failed: {failed} ❌")
+    print(f"Passed: {passed} ")
+    print(f"Failed: {failed} ")
 
     if failed == 0:
-        print("\n🎉 All tests passed! Daily max loss protection is working correctly.")
+        print("\n All tests passed! Daily max loss protection is working correctly.")
     else:
-        print(f"\n⚠️  {failed} test(s) failed. Please review the implementation.")
+        print(f"\n  {failed} test(s) failed. Please review the implementation.")
 
     print("="*70)
 
@@ -149,12 +149,12 @@ if __name__ == "__main__":
     print("\nChecking if server is running...")
 
     if not check_server():
-        print("❌ ERROR: Server is not running!")
+        print(" ERROR: Server is not running!")
         print("\nPlease start the server first:")
         print("  cd rnn-server")
         print("  uv run fastapi dev main.py")
         exit(1)
 
-    print("✅ Server is running\n")
+    print(" Server is running\n")
 
     test_daily_max_loss()

@@ -108,7 +108,7 @@ def train_model_background(df: pd.DataFrame):
         training_status["progress"] = "Training complete - model saved"
 
         print("\n" + "="*70)
-        print("✅ BACKGROUND TRAINING COMPLETE")
+        print(" BACKGROUND TRAINING COMPLETE")
         print(f"   Model trained: {trading_model.is_trained}")
         print(f"   Model saved: models/trading_model.pth")
         print("   Ready for predictions!")
@@ -118,7 +118,7 @@ def train_model_background(df: pd.DataFrame):
         training_status["is_training"] = False
         training_status["error"] = str(e)
         training_status["progress"] = f"Training failed: {e}"
-        print(f"\n❌ Training error: {e}")
+        print(f"\n Training error: {e}")
         import traceback
         traceback.print_exc()
 
@@ -324,7 +324,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
         # CHECK IF MODEL IS TRAINING - Block predictions during training
         if training_status["is_training"]:
             print("\n" + "="*50)
-            print("⚠️  MODEL IS TRAINING - Returning HOLD signal")
+            print("  MODEL IS TRAINING - Returning HOLD signal")
             print("="*50 + "\n")
             return {
                 "status": "training",
@@ -338,7 +338,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
         # CHECK IF MODEL IS TRAINED - Block predictions if model not ready
         if not trading_model.is_trained:
             print("\n" + "="*50)
-            print("⚠️  MODEL NOT TRAINED - Returning HOLD signal")
+            print("  MODEL NOT TRAINED - Returning HOLD signal")
             print("="*50)
             print(f"   Model is_trained flag: {trading_model.is_trained}")
             print(f"   Training status: {training_status['is_training']}")
@@ -350,7 +350,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             print(f"   Model file exists: {model_exists}")
 
             if model_exists:
-                print("   ⚠️  Model file exists but is_trained=False!")
+                print("     Model file exists but is_trained=False!")
                 print("   Try reloading the model or check training logs")
 
             print("="*50 + "\n")
@@ -383,7 +383,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
             filtered_signal = signal
             if confidence < MIN_CONFIDENCE_THRESHOLD:
                 filtered_signal = "hold"
-                print(f"\n⚠️  Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()} → HOLD")
+                print(f"\n  Low confidence ({confidence*100:.2f}%) - Filtering {signal.upper()}  HOLD")
 
             # ========================================================================
             # EARLY EXIT DETECTION (Intelligent exits before waiting for opposite signal)
@@ -447,7 +447,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                     original_signal_before_exit = filtered_signal
                     filtered_signal = "hold"
 
-                    print(f"\n🚨 EARLY EXIT DETECTED 🚨")
+                    print(f"\n EARLY EXIT DETECTED ")
                     print(f"Original Signal: {original_signal_before_exit.upper()}")
                     print(f"Reason: {exit_analysis['reason']}")
                     print(f"Urgency: {exit_analysis['urgency'].upper()}")
@@ -467,7 +467,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
             # Log risk management parameters
             if trade_params['contracts'] > 0:
-                print(f"\n📊 RISK MANAGEMENT PARAMETERS:")
+                print(f"\n RISK MANAGEMENT PARAMETERS:")
                 print(f"  Contracts: {trade_params['contracts']}")
                 print(f"  Entry Price: ${trade_params['entry_price']:.2f}")
                 print(f"  Stop Loss: ${trade_params['stop_loss']:.2f}")
@@ -478,7 +478,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
 
                 # Log counter-trend info
                 if trade_params.get('is_counter_trend', False):
-                    print(f"\n⚠️  COUNTER-TREND TRADE:")
+                    print(f"\n  COUNTER-TREND TRADE:")
                     print(f"  Trend Direction: {trade_params.get('trend_direction', 'unknown').upper()}")
                     print(f"  Trend Strength (ADX): {trade_params.get('trend_strength', 0):.1f}")
                     print(f"  Target Adjustment: {trade_params.get('target_adjustment', 1.0):.0%}")
@@ -486,7 +486,7 @@ async def analysis(request: dict, background_tasks: BackgroundTasks):
                 # Log filter details
                 filter_details = trade_params.get('filter_details', {})
                 if filter_details.get('filtered') or filter_details.get('boosted'):
-                    print(f"\n🔍 FILTER APPLIED:")
+                    print(f"\n FILTER APPLIED:")
                     print(f"  {filter_details.get('reason', 'N/A')}")
                     if 'confidence_boost' in filter_details:
                         print(f"  Confidence Boost: +{filter_details['confidence_boost']*100:.1f}%")

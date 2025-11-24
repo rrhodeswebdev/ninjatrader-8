@@ -19,12 +19,12 @@ def test_signal_stability():
     state.update_signal("buy", 0.7, datetime.now())
     allowed, reason = state.should_allow_signal("buy", 0.7)
     assert allowed, "Same signal should be allowed"
-    print("✅ Same signal allowed")
+    print(" Same signal allowed")
 
     # Test 2: Immediate reversal should be blocked
     allowed, reason = state.should_allow_signal("sell", 0.8)
     assert not allowed, "Immediate reversal should be blocked"
-    print(f"✅ Immediate reversal blocked: {reason}")
+    print(f" Immediate reversal blocked: {reason}")
 
     # Test 3: After cooldown, reversal should be allowed
     for i in range(5):
@@ -32,7 +32,7 @@ def test_signal_stability():
 
     allowed, reason = state.should_allow_signal("sell", 0.9)
     assert allowed, "Reversal after cooldown should be allowed"
-    print("✅ Reversal allowed after 5 bars cooldown")
+    print(" Reversal allowed after 5 bars cooldown")
 
     # Test 4: Insufficient confidence increase should be blocked
     state.update_signal("buy", 0.65, datetime.now())
@@ -41,9 +41,9 @@ def test_signal_stability():
 
     allowed, reason = state.should_allow_signal("sell", 0.70)
     assert not allowed, "Reversal with insufficient confidence should be blocked"
-    print(f"✅ Insufficient confidence increase blocked: {reason}")
+    print(f" Insufficient confidence increase blocked: {reason}")
 
-    print("\n✅ Signal Stability Tests PASSED\n")
+    print("\n Signal Stability Tests PASSED\n")
 
 
 def test_market_regime():
@@ -84,7 +84,7 @@ def test_market_regime():
           f"volatility_percentile={regime['metrics']['volatility_percentile']:.1%}")
     assert regime['regime'] == 'trending', f"Should detect trending market (got {regime['regime']})"
     assert regime['should_trade'], "Should allow trading in trending market"
-    print("✅ Trending market detected correctly")
+    print(" Trending market detected correctly")
 
     # Create choppy market data with historical context
     choppy_prices = []
@@ -110,7 +110,7 @@ def test_market_regime():
           f"volatility_percentile={regime['metrics']['volatility_percentile']:.1%}")
     assert regime['regime'] in ['choppy', 'volatile'], f"Should detect choppy/volatile market (got {regime['regime']})"
     assert not regime['should_trade'], "Should NOT trade in choppy market"
-    print("✅ Choppy market detected correctly")
+    print(" Choppy market detected correctly")
 
     # Create high volatility market with context
     volatile_prices = [100]
@@ -134,9 +134,9 @@ def test_market_regime():
     print(f"  Confidence Multiplier: {regime['confidence_multiplier']}")
     print(f"  Metrics: volatility_percentile={regime['metrics']['volatility_percentile']:.1%}")
     # Volatile regime detection depends on recent vs historical volatility
-    print(f"✅ Volatile market classified as: {regime['regime']}")
+    print(f" Volatile market classified as: {regime['regime']}")
 
-    print("\n✅ Market Regime Tests PASSED\n")
+    print("\n Market Regime Tests PASSED\n")
 
 
 def test_confidence_threshold():
@@ -159,7 +159,7 @@ def test_confidence_threshold():
     print(f"  Base: {base_threshold:.1%}")
     print(f"  Adjusted: {adjusted:.1%}")
     assert adjusted == 0.60, "Trending should keep base threshold"
-    print("✅ Trending market uses base threshold")
+    print(" Trending market uses base threshold")
 
     # Choppy market (1.5x multiplier)
     choppy_regime = {
@@ -171,7 +171,7 @@ def test_confidence_threshold():
     print(f"  Base: {base_threshold:.1%}")
     print(f"  Adjusted: {adjusted:.1%}")
     assert abs(adjusted - 0.90) < 0.001, f"Choppy should increase threshold to 90% (got {adjusted})"
-    print("✅ Choppy market increases threshold to 90%")
+    print(" Choppy market increases threshold to 90%")
 
     # Volatile market (1.3x multiplier)
     volatile_regime = {
@@ -183,9 +183,9 @@ def test_confidence_threshold():
     print(f"  Base: {base_threshold:.1%}")
     print(f"  Adjusted: {adjusted:.1%}")
     assert abs(adjusted - 0.78) < 0.001, f"Volatile should increase threshold to 78% (got {adjusted})"
-    print("✅ Volatile market increases threshold to 78%")
+    print(" Volatile market increases threshold to 78%")
 
-    print("\n✅ Confidence Threshold Tests PASSED\n")
+    print("\n Confidence Threshold Tests PASSED\n")
 
 
 def test_integration():
@@ -199,18 +199,18 @@ def test_integration():
         from core.market_regime import calculate_market_regime
         from services.request_handler import handle_realtime_request
 
-        print("✅ All modules import successfully")
+        print(" All modules import successfully")
 
         # Test signal state singleton
         state1 = get_signal_state()
         state2 = get_signal_state()
         assert state1 is state2, "Signal state should be singleton"
-        print("✅ Signal state singleton working")
+        print(" Signal state singleton working")
 
-        print("\n✅ Integration Tests PASSED\n")
+        print("\n Integration Tests PASSED\n")
 
     except Exception as e:
-        print(f"❌ Integration test failed: {e}")
+        print(f" Integration test failed: {e}")
         raise
 
 
@@ -227,16 +227,16 @@ def run_all_tests():
         test_integration()
 
         print("="*70)
-        print("✅ ALL TESTS PASSED!")
+        print(" ALL TESTS PASSED!")
         print("="*70)
         print("\nYour over-trading fixes are working correctly.")
         print("Ready to start paper trading!\n")
 
     except AssertionError as e:
-        print(f"\n❌ TEST FAILED: {e}\n")
+        print(f"\n TEST FAILED: {e}\n")
         raise
     except Exception as e:
-        print(f"\n❌ ERROR: {e}\n")
+        print(f"\n ERROR: {e}\n")
         raise
 
 
