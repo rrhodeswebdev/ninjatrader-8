@@ -112,7 +112,7 @@ def main():
     print("\n[STEP 1] Loading data...")
 
     # Try to load real data, fall back to synthetic
-    data_file = Path('historical_data.csv')
+    data_file = Path('../backtester/data/historical_data.csv') #NQ_1m_20251013_20251112
 
     if data_file.exists():
         loader = DataLoader()

@@ -26,11 +26,14 @@ class DataLoader:
         timezone: Optional[str] = None
     ) -> pd.DataFrame:
         """
-        Load OHLCV data from CSV file.
+        Load OHLCV data from CSV file. Handles multiple formats automatically:
+
+        Format 1: timestamp,open,high,low,close,volume,close_time
+        Format 2: Timestamp,Open,High,Low,Close,Volume
 
         Args:
             file_path: Path to CSV file
-            time_col: Name of time column (default: 'time')
+            time_col: Name of time column (default: 'time', auto-detected)
             date_format: Optional strftime format for parsing dates
             timezone: Optional timezone to localize timestamps
 
@@ -46,11 +49,26 @@ class DataLoader:
         # Read CSV
         df = pd.read_csv(file_path)
 
-        # Parse time column
+        # Normalize column names to lowercase for case-insensitive handling
+        df.columns = df.columns.str.lower().str.strip()
+
+        # Auto-detect time column name (support 'time', 'timestamp', etc.)
+        possible_time_cols = ['time', 'timestamp', 'datetime', 'date']
+        time_col_found = None
+        for col in possible_time_cols:
+            if col in df.columns:
+                time_col_found = col
+                break
+
+        if time_col_found is None:
+            raise ValueError(f"Could not find time column. Available columns: {df.columns.tolist()}")
+
+        # Parse time column with automatic format detection
         if date_format:
-            df['time'] = pd.to_datetime(df[time_col], format=date_format)
+            df['time'] = pd.to_datetime(df[time_col_found], format=date_format)
         else:
-            df['time'] = pd.to_datetime(df[time_col])
+            # Let pandas infer the format automatically (handles both YYYY-MM-DD and MM/DD/YYYY)
+            df['time'] = pd.to_datetime(df[time_col_found], infer_datetime_format=True)
 
         # Localize timezone if specified
         if timezone:
@@ -59,17 +77,17 @@ class DataLoader:
             else:
                 df['time'] = df['time'].dt.tz_convert(timezone)
 
-        # Ensure required columns exist
+        # Ensure required columns exist (now lowercase)
         required_cols = ['open', 'high', 'low', 'close']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            raise ValueError(f"Missing required columns: {missing_cols}")
+            raise ValueError(f"Missing required columns: {missing_cols}. Available: {df.columns.tolist()}")
 
         # Add volume if missing
         if 'volume' not in df.columns:
             df['volume'] = 0.0
 
-        # Standardize column order
+        # Standardize column order (ignore close_time if present)
         standard_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
         df = df[standard_cols].copy()
 
