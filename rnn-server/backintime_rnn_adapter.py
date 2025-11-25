@@ -40,7 +40,7 @@ try:
     from backintime.utils import PREFETCH_SINCE
     from backintime import FuturesStrategy
     from backintime.broker import (
-        OrderSide, LimitOrderOptions, TakeProfitOptions, StopLossOptions
+        OrderSide, LimitOrderOptions, MarketOrderOptions, TakeProfitOptions, StopLossOptions
     )
     from backintime.indicators import ATR
     BACKINTIME_AVAILABLE = True
@@ -148,48 +148,27 @@ class RNNFuturesStrategy(FuturesStrategy):
         if not self.broker.max_funds_for_futures:
             return
 
-        # Only trade on strong signals with high confidence
-        if signal == 'long' and confidence > 0.55 and not self.broker.in_long:
-            # Calculate stops
-            stop_loss = Decimal(str(current_price - (atr * self.atr_multiplier)))
-            take_profit = Decimal(str(current_price + (atr * self.atr_multiplier * 1.5)))  # 1.5:1 RR
+        # Conservative trading: Only trade when flat (no positions)
+        # This avoids capital conflicts and position management complexities
+        is_flat = not self.broker.in_long and not self.broker.in_short
 
-            # Enter long position using limit order (at current price ~ market order)
+        if signal == 'long' and confidence > 0.55 and is_flat:
+            # Enter long position only when completely flat
             order = LimitOrderOptions(
                 order_side=OrderSide.BUY,
                 order_price=Decimal(str(current_price)),
-                percentage_amount=Decimal('100'),
-                take_profit=TakeProfitOptions(
-                    percentage_amount=Decimal('100'),
-                    trigger_price=take_profit
-                ),
-                stop_loss=StopLossOptions(
-                    percentage_amount=Decimal('100'),
-                    trigger_price=stop_loss
-                )
+                percentage_amount=Decimal('15')  # ~15% of capital = 1-2 contracts with margin
             )
             self.broker.submit_limit_order(order)
 
-        elif signal == 'short' and confidence > 0.55 and not self.broker.in_short:
-            # Calculate stops
-            stop_loss = Decimal(str(current_price + (atr * self.atr_multiplier)))
-            take_profit = Decimal(str(current_price - (atr * self.atr_multiplier * 1.5)))  # 1.5:1 RR
-
-            # Enter short position using limit order (at current price ~ market order)
+        elif signal == 'short' and confidence > 0.55 and is_flat:
+            # Enter short position only when completely flat
             order = LimitOrderOptions(
                 order_side=OrderSide.SELL,
                 order_price=Decimal(str(current_price)),
-                percentage_amount=Decimal('100'),
-                take_profit=TakeProfitOptions(
-                    percentage_amount=Decimal('100'),
-                    trigger_price=take_profit
-                ),
-                stop_loss=StopLossOptions(
-                    percentage_amount=Decimal('100'),
-                    trigger_price=stop_loss
-                )
+                percentage_amount=Decimal('15')  # ~15% of capital = 1-2 contracts with margin
             )
-            self.broker.submit_limit_short(order)
+            self.broker.submit_limit_order(order)
 
 
 def convert_rnn_data_to_backintime_format(

@@ -12,6 +12,12 @@ import sys
 import os
 from pathlib import Path
 
+# Force UTF-8 encoding for stdout/stderr on Windows (enables Unicode characters)
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -35,7 +41,7 @@ from config import (
 
 def generate_sample_data(n_bars: int = 15000) -> pd.DataFrame:
     """Generate synthetic stock market data for testing (9:30 AM - 4:00 PM ET)"""
-    print(f"\n Generating {n_bars} bars of synthetic stock market data...")
+    print(f"\n📊 Generating {n_bars} bars of synthetic stock market data...")
 
     start_price = 4500.0
     # Start on Monday at 9:30 AM (market open)
@@ -84,7 +90,7 @@ def generate_sample_data(n_bars: int = 15000) -> pd.DataFrame:
         'volume': volume
     })
 
-    print(f"OK: Generated {len(df)} bars")
+    print(f"✓ Generated {len(df)} bars")
     print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
     print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
 
@@ -111,9 +117,9 @@ def main():
     if data_file.exists():
         loader = DataLoader()
         df = loader.load_csv(str(data_file))
-        print(f"OK: Loaded {len(df)} bars from {data_file}")
+        print(f"✓ Loaded {len(df)} bars from {data_file}")
     else:
-        print(f"WARNING:  {data_file} not found, generating synthetic stock market data")
+        print(f"⚠️  {data_file} not found, generating synthetic stock market data")
         df = generate_sample_data(n_bars=15000)  # Increased for better coverage
 
     # ========================================================================
@@ -356,25 +362,25 @@ def main():
 
         if sharpe > 1.5 and win_rate > 0.55 and profit_factor > 1.5:
             print("  OK EXCELLENT - Strategy shows strong performance")
-            print("     -> Ready for production validation with backintime")
-            print("     -> Consider live paper trading")
+            print("     → Ready for production validation with backintime")
+            print("     → Consider live paper trading")
 
         elif sharpe > 1.0 and win_rate > 0.50:
             print("  OK: GOOD - Strategy shows promise")
-            print("     -> Validate with backintime before live trading")
-            print("     -> Consider parameter optimization")
+            print("     → Validate with backintime before live trading")
+            print("     → Consider parameter optimization")
 
         elif sharpe > 0.5:
             print("  WARNING:  MARGINAL - Strategy needs improvement")
-            print("     -> Review risk management parameters")
-            print("     -> Consider more training data")
-            print("     -> Adjust confidence threshold")
+            print("     → Review risk management parameters")
+            print("     → Consider more training data")
+            print("     → Adjust confidence threshold")
 
         else:
             print("  X POOR - Strategy not recommended")
-            print("     -> Retrain model with different features")
-            print("     -> Review signal quality")
-            print("     -> Consider different market regimes")
+            print("     → Retrain model with different features")
+            print("     → Review signal quality")
+            print("     → Consider different market regimes")
 
         print(f"\n  Key Metrics:")
         print(f"    Sharpe Ratio:   {sharpe:.2f} (target: >1.0)")
