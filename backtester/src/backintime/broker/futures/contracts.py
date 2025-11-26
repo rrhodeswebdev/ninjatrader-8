@@ -127,16 +127,20 @@ class ContractUtils:
         return num_contracts*self._settings.per_contract_overnight_margin
 
     def get_net_gain(self, fill_price, fills, contracts, long=True):
-        net_gain = 0
-        fees = 0
+        """Return net gain and fees using Decimal-safe math to avoid float mixing."""
+        net_gain = Decimal('0')
+        fees = Decimal('0')
 
         fee_rate = self._settings.per_contract_fee
         quotient = self._settings.per_contract_quotient
 
         for entry_fill, num_contracts in zip(fills, contracts):
-            price_diff = fill_price - entry_fill if long else entry_fill - fill_price
-            gain = price_diff*num_contracts*quotient
-            fee = num_contracts*fee_rate
+            # ensure Decimal arithmetic
+            fp = Decimal(str(fill_price))
+            ef = Decimal(str(entry_fill))
+            price_diff = fp - ef if long else ef - fp
+            gain = price_diff * Decimal(num_contracts) * quotient
+            fee = Decimal(num_contracts) * fee_rate
             fees += fee
             net_gain += gain - fee
         return net_gain, fees

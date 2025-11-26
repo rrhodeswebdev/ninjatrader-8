@@ -14,6 +14,13 @@ class TradeProfit:
     relative_profit: Decimal
     absolute_profit: Decimal
 
+    def __float__(self) -> float:
+        """Allow safe float() conversion; defaults to absolute profit."""
+        try:
+            return float(self.absolute_profit)
+        except Exception:
+            return 0.0
+
 
 def _repr_profit(trade_profit: TradeProfit, percents_first=True) -> str:
     """
@@ -25,13 +32,13 @@ def _repr_profit(trade_profit: TradeProfit, percents_first=True) -> str:
     if trade_profit is None:
         return repr(None)
     if percents_first:
-        return (f"{trade_profit.relative_profit:+.2f}% "
-                f"({trade_profit.absolute_profit:+.2f} absolute) "
+        return (f"{float(trade_profit.relative_profit):+.2f}% "
+                f"({float(trade_profit.absolute_profit):+.2f} absolute) "
                 f"Trade#{trade_profit.trade_id} "
                 f"Order#{trade_profit.order_id}")
     else:
-        return (f"{trade_profit.absolute_profit:+.2f} "
-                f"({trade_profit.relative_profit:+.2f}% relative) "
+        return (f"{float(trade_profit.absolute_profit):+.2f} "
+                f"({float(trade_profit.relative_profit):+.2f}% relative) "
                 f"Trade#{trade_profit.trade_id} "
                 f"Order#{trade_profit.order_id}")
 

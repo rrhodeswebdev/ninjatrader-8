@@ -43,7 +43,7 @@ def generate_sample_data(n_bars: int = 15000) -> pd.DataFrame:
     """Generate synthetic stock market data for testing (9:30 AM - 4:00 PM ET)"""
     print(f"\n📊 Generating {n_bars} bars of synthetic stock market data...")
 
-    start_price = 4500.0
+    start_price = 24000.0
     # Start on Monday at 9:30 AM (market open)
     start_time = pd.Timestamp('2024-01-02 09:30:00')  # Tuesday, Jan 2, 2024
 

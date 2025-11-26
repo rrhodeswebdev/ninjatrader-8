@@ -367,9 +367,18 @@ def compare_backtest_results(
             return default
         # If it's a dict, use .get()
         if hasattr(d, 'get'):
-            return d.get(key, default)
+            val = d.get(key, default)
         # Otherwise try getattr for objects
-        return getattr(d, key, default)
+        else:
+            val = getattr(d, key, default)
+        # Normalize Decimal to float to avoid mixing types with floats
+        try:
+            from decimal import Decimal
+            if isinstance(val, Decimal):
+                return float(val)
+        except Exception:
+            pass
+        return val
 
     # Trade Statistics
     metrics.append({

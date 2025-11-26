@@ -141,10 +141,10 @@ def export_stats(filename: str,
                 decimal_to_str(stats.average_profit_percents),
                 decimal_to_str(stats.average_loss),
                 decimal_to_str(stats.average_loss_percents),
-                decimal_to_str(stats.best_deal_relative.relative_profit),
-                decimal_to_str(stats.best_deal_absolute.absolute_profit),
-                decimal_to_str(stats.worst_deal_relative.relative_profit),
-                decimal_to_str(stats.worst_deal_absolute.absolute_profit)
+                decimal_to_str(getattr(stats.best_deal_relative, "relative_profit", Decimal("NaN"))),
+                decimal_to_str(getattr(stats.best_deal_absolute, "absolute_profit", Decimal("NaN"))),
+                decimal_to_str(getattr(stats.worst_deal_relative, "relative_profit", Decimal("NaN"))),
+                decimal_to_str(getattr(stats.worst_deal_absolute, "absolute_profit", Decimal("NaN")))
         ])
     if optimization:
         lock.release()

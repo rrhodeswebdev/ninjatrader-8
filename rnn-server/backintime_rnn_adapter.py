@@ -31,6 +31,52 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+# CME-aligned margin presets (approximate; adjust if your broker/day margins differ)
+CONTRACT_MARGIN_PRESETS = {
+    "MNQ": {  # Micro E-mini Nasdaq-100
+        "init": Decimal("1430"),
+        "maintenance": Decimal("1300"),
+        "overnight": Decimal("1430"),
+        "additional": Decimal("0"),
+        "fee": Decimal("0.25"),
+    },
+    "NQ": {   # E-mini Nasdaq-100
+        "init": Decimal("14300"),
+        "maintenance": Decimal("13000"),
+        "overnight": Decimal("14300"),
+        "additional": Decimal("0"),
+        "fee": Decimal("1.25"),
+    },
+    "MES": {  # Micro E-mini S&P 500
+        "init": Decimal("1260"),
+        "maintenance": Decimal("1150"),
+        "overnight": Decimal("1260"),
+        "additional": Decimal("0"),
+        "fee": Decimal("0.25"),
+    },
+    "ES": {   # E-mini S&P 500
+        "init": Decimal("12600"),
+        "maintenance": Decimal("11500"),
+        "overnight": Decimal("12600"),
+        "additional": Decimal("0"),
+        "fee": Decimal("1.25"),
+    },
+    "MGC": {  # Micro Gold
+        "init": Decimal("990"),
+        "maintenance": Decimal("900"),
+        "overnight": Decimal("990"),
+        "additional": Decimal("0"),
+        "fee": Decimal("0.35"),
+    },
+    "GC": {   # Gold
+        "init": Decimal("9900"),
+        "maintenance": Decimal("9000"),
+        "overnight": Decimal("9900"),
+        "additional": Decimal("0"),
+        "fee": Decimal("1.50"),
+    },
+}
+
 # Import backintime components
 try:
     from backintime import run_backtest
@@ -50,6 +96,13 @@ except ImportError:
     class FuturesStrategy:
         """Dummy base class when backintime is not available"""
         pass
+    # Provide minimal stubs so the module can be imported without backintime
+    class _DummyTF:
+        M1 = "M1"
+    tf = _DummyTF()
+    def ATR(*args, **kwargs):  # type: ignore
+        return None
+    PREFETCH_SINCE = None
     print("WARNING: backintime not installed - adapter functionality limited")
 
 from model import TradingModel
@@ -70,7 +123,10 @@ class RNNFuturesStrategy(FuturesStrategy):
     }
 
     def __init__(self, model: TradingModel, atr_multiplier: float = 2.0,
-                 broker_proxy=None, analyser=None, candles=None):
+                 broker_proxy=None, analyser=None, candles=None,
+                 per_contract_init_margin: Decimal = Decimal('1699.64'),
+                 per_contract_fee: Decimal = Decimal('0.62'),
+                 additional_collateral: Decimal = Decimal('1500')):
         """
         Initialize RNN strategy.
 
@@ -80,16 +136,20 @@ class RNNFuturesStrategy(FuturesStrategy):
             broker_proxy: backintime broker proxy (passed by framework)
             analyser: backintime analyser (passed by framework)
             candles: backintime candles buffer (passed by framework)
+            per_contract_init_margin: Initial margin requirement per contract
+            per_contract_fee: Fee per contract
+            additional_collateral: Extra collateral per contract
         """
         self.model = model
-        self.atr_multiplier = atr_multiplier
+        self.atr_multiplier = Decimal(str(atr_multiplier))  # Convert to Decimal
         self.historical_data = []
         self.min_bars_required = model.sequence_length + 50  # Extra for indicators
+        self.one_contract_usd = per_contract_init_margin + additional_collateral + per_contract_fee
 
         # Risk parameters (ES futures)
         self.max_position_size = 1  # Conservative: 1 contract
-        self.tick_size = 0.25
-        self.point_value = 50.0
+        self.tick_size = Decimal('0.25')  # Use Decimal for consistency
+        self.point_value = Decimal('50.0')  # Use Decimal for consistency
 
         # Call parent init with backintime's expected arguments
         if broker_proxy is not None and analyser is not None and candles is not None:
@@ -138,11 +198,16 @@ class RNNFuturesStrategy(FuturesStrategy):
         # Get current ATR for risk management using backintime's analyser
         atr_values = self.analyser.atr(tf.M1, period=14)
         if atr_values is None or len(atr_values) == 0:
-            atr = 15.0  # Default fallback
+            atr = Decimal('15.0')  # Default fallback as Decimal
         else:
-            atr = float(atr_values[-1])
+            atr = Decimal(str(atr_values[-1]))  # Convert to Decimal
 
-        current_price = float(candle.close)
+        current_price = Decimal(str(candle.close))  # Convert to Decimal
+
+        # Debug: Track signal distribution every 100 bars
+        if len(self.historical_data) % 100 == 0:
+            print(f"[DEBUG] Bar {len(self.historical_data)}: signal={signal}, confidence={confidence:.3f}, "
+                  f"in_long={self.broker.in_long}, in_short={self.broker.in_short}")
 
         # Check if we have funds to trade
         if not self.broker.max_funds_for_futures:
@@ -152,23 +217,66 @@ class RNNFuturesStrategy(FuturesStrategy):
         # This avoids capital conflicts and position management complexities
         is_flat = not self.broker.in_long and not self.broker.in_short
 
+        # If we somehow still don't have enough cash, skip
+        if self.broker.balance.available_usd_balance < self.one_contract_usd:
+            if signal != 'hold':
+                print(f"[DEBUG] Insufficient funds: need ${self.one_contract_usd:.2f}, "
+                      f"have ${self.broker.balance.available_usd_balance:.2f}")
+            return
+
+        # EXIT LOGIC: Close positions on opposite signals
+        if self.broker.in_long and signal == 'short' and confidence > 0.55:
+            # Exit long position on strong short signal
+            print(f"[EXIT] Closing LONG at ${float(current_price):.2f}, reason: SHORT signal (confidence={confidence:.3f})")
+            order = MarketOrderOptions(
+                order_side=OrderSide.SELL,
+                amount=self.one_contract_usd  # Close exact amount we opened
+            )
+            try:
+                self.broker.submit_market_order(order)
+                return  # Don't enter new position on same bar
+            except Exception as e:
+                print(f"Exit order failed (long): {e}")
+
+        elif self.broker.in_short and signal == 'long' and confidence > 0.55:
+            # Exit short position on strong long signal
+            print(f"[EXIT] Closing SHORT at ${float(current_price):.2f}, reason: LONG signal (confidence={confidence:.3f})")
+            order = MarketOrderOptions(
+                order_side=OrderSide.BUY,
+                amount=self.one_contract_usd  # Close exact amount we opened
+            )
+            try:
+                self.broker.submit_market_order(order)
+                return  # Don't enter new position on same bar
+            except Exception as e:
+                print(f"Exit order failed (short): {e}")
+
+        # ENTRY LOGIC: Only enter when flat
         if signal == 'long' and confidence > 0.55 and is_flat:
             # Enter long position only when completely flat
+            print(f"[ENTRY] Opening LONG at ${float(current_price):.2f}, confidence={confidence:.3f}")
             order = LimitOrderOptions(
                 order_side=OrderSide.BUY,
-                order_price=Decimal(str(current_price)),
-                percentage_amount=Decimal('15')  # ~15% of capital = 1-2 contracts with margin
+                order_price=current_price,  # Already Decimal
+                amount=self.one_contract_usd  # fund exactly one contract
             )
-            self.broker.submit_limit_order(order)
+            try:
+                self.broker.submit_limit_order(order)
+            except Exception as e:
+                print(f"Entry order skipped (long): {e}")
 
         elif signal == 'short' and confidence > 0.55 and is_flat:
             # Enter short position only when completely flat
+            print(f"[ENTRY] Opening SHORT at ${float(current_price):.2f}, confidence={confidence:.3f}")
             order = LimitOrderOptions(
                 order_side=OrderSide.SELL,
-                order_price=Decimal(str(current_price)),
-                percentage_amount=Decimal('15')  # ~15% of capital = 1-2 contracts with margin
+                order_price=current_price,  # Already Decimal
+                amount=self.one_contract_usd  # fund exactly one contract
             )
-            self.broker.submit_limit_order(order)
+            try:
+                self.broker.submit_limit_order(order)
+            except Exception as e:
+                print(f"Entry order skipped (short): {e}")
 
 
 def convert_rnn_data_to_backintime_format(
@@ -273,6 +381,7 @@ def run_rnn_backtest(
     until: datetime,
     initial_capital: float = 10000.0,
     atr_multiplier: float = 2.0,
+    contract: str = "MNQ",
     session_start: timedelta = timedelta(hours=9, minutes=30),
     session_end: timedelta = timedelta(hours=16, minutes=0),
     session_timezone: str = 'America/New_York',
@@ -320,8 +429,23 @@ def run_rnn_backtest(
     print(f"Sequence Length: {model.sequence_length}")
     print(f"Data File: {data_file}")
     print(f"Period: {since} to {until}")
+    print(f"Contract: {contract}")
     print(f"Initial Capital: ${initial_capital:,.2f}")
     print("="*70 + "\n")
+
+    # Contract settings used by both broker and strategy sizing
+    preset = CONTRACT_MARGIN_PRESETS.get(contract.upper(), {
+        "init": Decimal("1699.64"),
+        "maintenance": Decimal("1500"),
+        "overnight": Decimal("2200"),
+        "additional": Decimal("0"),
+        "fee": Decimal("0.62"),
+    })
+    per_contract_init_margin = preset["init"]
+    per_contract_maintenance_margin = preset["maintenance"]
+    per_contract_overnight_margin = preset["overnight"]
+    additional_collateral = preset["additional"]
+    per_contract_fee = preset["fee"]
 
     # Setup data feed
     schema = CSVCandlesSchema(
@@ -363,7 +487,10 @@ def run_rnn_backtest(
     class ParameterizedRNNStrategy(RNNFuturesStrategy):
         def __init__(self, broker_proxy, analyser, candles):
             super().__init__(model=model, atr_multiplier=atr_multiplier,
-                           broker_proxy=broker_proxy, analyser=analyser, candles=candles)
+                           broker_proxy=broker_proxy, analyser=analyser, candles=candles,
+                           per_contract_init_margin=per_contract_init_margin,
+                           per_contract_fee=per_contract_fee,
+                           additional_collateral=additional_collateral)
 
     # Run backtest
     result = run_backtest(
@@ -375,11 +502,11 @@ def run_rnn_backtest(
         None,  # until_candle
         session,
         prefetch_option=PREFETCH_SINCE,
-        additional_collateral=Decimal('1500'),
+        additional_collateral=additional_collateral,
         check_margin_call=True,
-        per_contract_init_margin=Decimal('1699.64'),
-        per_contract_maintenance_margin=Decimal('1500'),
-        per_contract_overnight_margin=Decimal('2200')
+        per_contract_init_margin=per_contract_init_margin,
+        per_contract_maintenance_margin=per_contract_maintenance_margin,
+        per_contract_overnight_margin=per_contract_overnight_margin
     )
 
     # Print results
