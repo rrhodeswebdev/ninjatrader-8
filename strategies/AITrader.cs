@@ -30,6 +30,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool allowLongTrades = true;
         private bool allowShortTrades = true;
         private bool tradingEnabled = true;
+        private readonly TimeSpan tradingStartTime = new TimeSpan(9, 30, 0);  // Gate live trading until 9:30
 
         // Daily Profit/Loss Management
         private double dailyProfitGoal = 500.0;    // Daily profit goal in currency
@@ -475,6 +476,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Send current bar data on each bar close (real-time only)
             if (State == State.Realtime)
             {
+                // Do not trade before the configured start time (uses primary series time zone)
+                if (Times[0][0].TimeOfDay < tradingStartTime)
+                    return;
+
                 SendBarData(CurrentBar);
             }
         }
