@@ -13,6 +13,13 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Tuple, Union
 from datetime import datetime, timedelta
+from trading_metrics import (
+    calculate_expectancy,
+    calculate_max_drawdown,
+    calculate_profit_factor,
+    calculate_sharpe_ratio,
+    calculate_sortino_ratio,
+)
 
 
 class DataLoader:
@@ -99,6 +106,63 @@ class DataLoader:
         df = df.dropna()
 
         print(f" Loaded {len(df)} bars from {file_path.name}")
+        print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
+        print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
+
+        return df
+
+    @staticmethod
+    def load_ninjatrader_csv(
+        file_path: str,
+        timezone: Optional[str] = None
+    ) -> pd.DataFrame:
+        """
+        Load NinjaTrader export data from CSV file.
+
+        NinjaTrader format: YYYYMMDD HHMMSS;open;high;low;close;volume (no header)
+
+        Args:
+            file_path: Path to NinjaTrader CSV file
+            timezone: Optional timezone to localize timestamps
+
+        Returns:
+            DataFrame with standardized format
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Data file not found: {file_path}")
+
+        # Read CSV with semicolon delimiter
+        df = pd.read_csv(
+            file_path,
+            sep=';',
+            header=None,
+            names=['datetime', 'open', 'high', 'low', 'close', 'volume']
+        )
+
+        # Parse datetime (format: YYYYMMDD HHMMSS)
+        df['time'] = pd.to_datetime(df['datetime'], format='%Y%m%d %H%M%S')
+        df = df.drop(columns=['datetime'])
+
+        # Localize timezone if specified
+        if timezone:
+            if df['time'].dt.tz is None:
+                df['time'] = df['time'].dt.tz_localize(timezone)
+            else:
+                df['time'] = df['time'].dt.tz_convert(timezone)
+
+        # Ensure numeric types
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Remove any NaN rows
+        df = df.dropna()
+
+        # Standardize column order
+        standard_cols = ['time', 'open', 'high', 'low', 'close', 'volume']
+        df = df[standard_cols].copy()
+
+        print(f" Loaded {len(df)} bars from {file_path.name} (NinjaTrader format)")
         print(f"  Date range: {df['time'].min()} to {df['time'].max()}")
         print(f"  Price range: ${df['low'].min():.2f} to ${df['high'].max():.2f}")
 
@@ -361,6 +425,51 @@ def compare_backtest_results(
     # Build comparison DataFrame
     metrics = []
 
+    def compute_max_dd_from_equity(equity_curve):
+        """Compute max drawdown (%) from an equity curve safely."""
+        try:
+            eq = np.array(equity_curve, dtype=float)
+        except Exception:
+            return 0.0
+        if eq.size == 0:
+            return 0.0
+        start_cap = eq[0]
+        if start_cap <= 0:
+            return 0.0
+        # Normalize to start at 1.0 to avoid divide-by-zero blowups
+        normalized = (eq / start_cap).astype(float)
+        normalized = np.insert(normalized, 0, 1.0)
+        return calculate_max_drawdown(normalized) * 100
+
+    def compute_rnn_metrics(rnn_result: dict):
+        """Lightweight recompute for RNN backtester to avoid pathological values."""
+        derived = {}
+        if not isinstance(rnn_result, dict):
+            return derived
+
+        try:
+            equity_curve = np.array(rnn_result.get('equity_curve', []), dtype=float)
+        except Exception:
+            equity_curve = np.array([])
+
+        if equity_curve.size:
+            start_cap = equity_curve[0]
+            derived['max_drawdown'] = compute_max_dd_from_equity(equity_curve)
+            derived['total_return_pct'] = ((equity_curve[-1] - start_cap) / start_cap) * 100 if start_cap else rnn_result.get('total_return_pct', 0)
+
+        return derived
+
+    rnn_derived = compute_rnn_metrics(rnn_results)
+
+    def to_float(val, default=0.0):
+        """Normalize Decimals/TradeProfit/None -> float."""
+        if val is None:
+            return default
+        try:
+            return float(val)
+        except Exception:
+            return default
+
     # Helper to safely get values from dict or object
     def safe_get(d, key, default=0):
         if d is None:
@@ -378,38 +487,164 @@ def compare_backtest_results(
                 return float(val)
         except Exception:
             pass
+        try:
+            from backintime.result.futures_stats import TradeProfit
+            if isinstance(val, TradeProfit):
+                return float(val)
+        except Exception:
+            pass
         return val
 
+    def compute_backintime_metrics(bt_result):
+        """Derive richer metrics from backintime BacktestingResult."""
+        derived = {}
+        if bt_result is None:
+            return derived
+
+        # Try to pull stats/trades from the result object
+        try:
+            bt_stats_obj = bt_result.get_stats()
+        except Exception:
+            bt_stats_obj = None
+
+        # Trades sequence (private attr or accessor)
+        trades_seq = []
+        for attr in ('_trades', 'trades', 'get_trades'):
+            try:
+                candidate = getattr(bt_result, attr)
+                trades_seq = candidate() if callable(candidate) else candidate
+                if trades_seq:
+                    break
+            except Exception:
+                continue
+
+        # Compute per-trade profits using backintime helper if available
+        profits = []
+        try:
+            from backintime.result.futures_stats import get_trades_profit
+            profits = get_trades_profit(trades_seq) if trades_seq else []
+        except Exception:
+            profits = []
+
+        profit_vals = np.array([to_float(p.absolute_profit, 0.0) for p in profits], dtype=float) if profits else np.array([])
+
+        start_balance = to_float(getattr(bt_result, 'start_balance', None), 0.0)
+        result_equity = to_float(getattr(bt_result, 'result_equity', None), 0.0)
+        if not result_equity and start_balance and profit_vals.size:
+            result_equity = start_balance + profit_vals.sum()
+
+        stats_trades = to_float(getattr(bt_stats_obj, 'trades_count', 0), 0)
+        result_trades = to_float(getattr(bt_result, 'trades_count', 0), 0)
+        profit_trades = profit_vals.size
+        derived['total_trades'] = int(max(profit_trades, result_trades, stats_trades))
+
+        wins_from_profits = int((profit_vals > 0).sum()) if profit_vals.size else 0
+        stats_wins = to_float(getattr(bt_stats_obj, 'wins_count', 0), 0)
+        derived['winning_trades'] = int(max(wins_from_profits, stats_wins))
+
+        losses_from_profits = int((profit_vals < 0).sum()) if profit_vals.size else 0
+        stats_losses = to_float(getattr(bt_stats_obj, 'losses_count', 0), 0)
+        derived['losing_trades'] = int(max(losses_from_profits, stats_losses))
+
+        derived['total_pnl'] = profit_vals.sum() if profit_vals.size else to_float(getattr(bt_result, 'total_gain', 0), 0)
+        derived['avg_trade_pnl'] = profit_vals.mean() if profit_vals.size else to_float(getattr(bt_stats_obj, 'average_profit_all', 0), 0)
+        derived['avg_win'] = profit_vals[profit_vals > 0].mean() if (profit_vals > 0).any() else to_float(getattr(bt_stats_obj, 'average_profit', 0), 0)
+        derived['avg_loss'] = profit_vals[profit_vals < 0].mean() if (profit_vals < 0).any() else to_float(getattr(bt_stats_obj, 'average_loss', 0), 0)
+        derived['largest_win'] = profit_vals.max() if profit_vals.size else to_float(getattr(bt_stats_obj, 'best_deal_absolute', 0), 0)
+        derived['largest_loss'] = profit_vals.min() if profit_vals.size else to_float(getattr(bt_stats_obj, 'worst_deal_absolute', 0), 0)
+        derived['expectancy'] = calculate_expectancy(profit_vals) if profit_vals.size else to_float(getattr(bt_stats_obj, 'expectancy', 0), 0)
+
+        # Risk metrics using reconstructed equity curve where possible
+        equity_curve = None
+        if profit_vals.size and start_balance:
+            equity_curve = start_balance + np.cumsum(profit_vals)
+
+        if equity_curve is not None and equity_curve.size:
+            derived['max_drawdown'] = compute_max_dd_from_equity(equity_curve)
+        else:
+            derived['max_drawdown'] = to_float(getattr(bt_stats_obj, 'max_drawdown', 0), 0)
+
+        returns_pct = profit_vals / start_balance if start_balance else profit_vals
+        derived['sharpe_ratio'] = calculate_sharpe_ratio(returns_pct, periods_per_year=252) if returns_pct.size else 0
+        derived['sortino_ratio'] = calculate_sortino_ratio(returns_pct, periods_per_year=252) if returns_pct.size else 0
+        derived['profit_factor'] = calculate_profit_factor(profit_vals) if profit_vals.size else to_float(getattr(bt_stats_obj, 'profit_factor', 0), 0)
+
+        if start_balance:
+            derived['total_return_pct'] = ((result_equity - start_balance) / start_balance) * 100
+        else:
+            derived['total_return_pct'] = to_float(getattr(bt_result, 'total_gain_percents', 0), 0)
+
+        # backintime win_rate is already percent
+        if bt_stats_obj is not None:
+            try:
+                derived['win_rate'] = float(bt_stats_obj.win_rate)
+            except Exception:
+                derived['win_rate'] = 0.0
+        else:
+            derived['win_rate'] = 0.0
+
+        # Fallback: compute win rate from derived counts if stats were missing
+        if derived['win_rate'] == 0.0 and derived['total_trades'] > 0:
+            derived['win_rate'] = (derived['winning_trades'] / derived['total_trades']) * 100
+
+        return derived
+
     # Trade Statistics
+    bt_derived = compute_backintime_metrics(backintime_results)
+
     metrics.append({
         'Metric': 'Total Trades',
         'RNN Backtester': safe_get(rnn_results, 'total_trades', 0),
-        'backintime': safe_get(bt_stats, 'total_trades', 0),
+        'backintime': bt_derived.get('total_trades', safe_get(bt_stats, 'total_trades', 0)),
+        'Difference': 0,
+        'Unit': 'trades'
+    })
+
+    def normalize_win_rate(val):
+        try:
+            v = float(val)
+        except Exception:
+            return 0.0
+        # backintime win_rate already 0-100; rnn win_rate is 0-1
+        return v if v > 1 else v * 100
+
+    metrics.append({
+        'Metric': 'Win Rate',
+        'RNN Backtester': normalize_win_rate(safe_get(rnn_results, 'win_rate', 0)),
+        'backintime': normalize_win_rate(bt_derived.get('win_rate', safe_get(bt_stats, 'win_rate', 0))),
+        'Difference': normalize_win_rate(safe_get(rnn_results, 'win_rate', 0)) - normalize_win_rate(bt_derived.get('win_rate', safe_get(bt_stats, 'win_rate', 0))),
+        'Unit': '%'
+    })
+
+    metrics.append({
+        'Metric': 'Winning Trades',
+        'RNN Backtester': safe_get(rnn_results, 'winning_trades', 0),
+        'backintime': bt_derived.get('winning_trades', safe_get(bt_stats, 'wins_count', 0)),
         'Difference': 0,
         'Unit': 'trades'
     })
 
     metrics.append({
-        'Metric': 'Win Rate',
-        'RNN Backtester': safe_get(rnn_results, 'win_rate', 0) * 100,
-        'backintime': safe_get(bt_stats, 'win_rate', 0) * 100,
+        'Metric': 'Losing Trades',
+        'RNN Backtester': safe_get(rnn_results, 'losing_trades', 0),
+        'backintime': bt_derived.get('losing_trades', safe_get(bt_stats, 'losses_count', 0)),
         'Difference': 0,
-        'Unit': '%'
+        'Unit': 'trades'
     })
 
     # P&L Metrics
     metrics.append({
         'Metric': 'Total P&L',
         'RNN Backtester': safe_get(rnn_results, 'total_pnl', 0),
-        'backintime': safe_get(bt_stats, 'total_pnl', 0),
+        'backintime': bt_derived.get('total_pnl', safe_get(bt_stats, 'total_pnl', 0)),
         'Difference': 0,
         'Unit': '$'
     })
 
     metrics.append({
         'Metric': 'Total Return',
-        'RNN Backtester': safe_get(rnn_results, 'total_return_pct', 0),
-        'backintime': safe_get(bt_stats, 'total_return_pct', 0),
+        'RNN Backtester': rnn_derived.get('total_return_pct', safe_get(rnn_results, 'total_return_pct', 0)),
+        'backintime': bt_derived.get('total_return_pct', safe_get(bt_stats, 'total_return_pct', 0)),
         'Difference': 0,
         'Unit': '%'
     })
@@ -418,7 +653,7 @@ def compare_backtest_results(
     metrics.append({
         'Metric': 'Sharpe Ratio',
         'RNN Backtester': safe_get(rnn_results, 'sharpe_ratio', 0),
-        'backintime': safe_get(bt_stats, 'sharpe_ratio', 0),
+        'backintime': bt_derived.get('sharpe_ratio', safe_get(bt_stats, 'sharpe_ratio', 0)),
         'Difference': 0,
         'Unit': 'ratio'
     })
@@ -426,7 +661,7 @@ def compare_backtest_results(
     metrics.append({
         'Metric': 'Sortino Ratio',
         'RNN Backtester': safe_get(rnn_results, 'sortino_ratio', 0),
-        'backintime': safe_get(bt_stats, 'sortino_ratio', 0),
+        'backintime': bt_derived.get('sortino_ratio', safe_get(bt_stats, 'sortino_ratio', 0)),
         'Difference': 0,
         'Unit': 'ratio'
     })
@@ -434,15 +669,15 @@ def compare_backtest_results(
     metrics.append({
         'Metric': 'Profit Factor',
         'RNN Backtester': safe_get(rnn_results, 'profit_factor', 0),
-        'backintime': safe_get(bt_stats, 'profit_factor', 0),
+        'backintime': bt_derived.get('profit_factor', safe_get(bt_stats, 'profit_factor', 0)),
         'Difference': 0,
         'Unit': 'ratio'
     })
 
     metrics.append({
         'Metric': 'Max Drawdown',
-        'RNN Backtester': safe_get(rnn_results, 'max_drawdown', 0),
-        'backintime': safe_get(bt_stats, 'max_drawdown', 0),
+        'RNN Backtester': rnn_derived.get('max_drawdown', safe_get(rnn_results, 'max_drawdown', 0)),
+        'backintime': bt_derived.get('max_drawdown', safe_get(bt_stats, 'max_drawdown', 0)),
         'Difference': 0,
         'Unit': '%'
     })
@@ -451,7 +686,47 @@ def compare_backtest_results(
     metrics.append({
         'Metric': 'Avg Trade P&L',
         'RNN Backtester': safe_get(rnn_results, 'avg_trade_pnl', 0),
-        'backintime': safe_get(bt_stats, 'avg_trade_pnl', 0),
+        'backintime': bt_derived.get('avg_trade_pnl', safe_get(bt_stats, 'avg_trade_pnl', 0)),
+        'Difference': 0,
+        'Unit': '$'
+    })
+
+    metrics.append({
+        'Metric': 'Avg Win',
+        'RNN Backtester': safe_get(rnn_results, 'avg_win', 0),
+        'backintime': bt_derived.get('avg_win', safe_get(bt_stats, 'average_profit', 0)),
+        'Difference': 0,
+        'Unit': '$'
+    })
+
+    metrics.append({
+        'Metric': 'Avg Loss',
+        'RNN Backtester': safe_get(rnn_results, 'avg_loss', 0),
+        'backintime': bt_derived.get('avg_loss', safe_get(bt_stats, 'average_loss', 0)),
+        'Difference': 0,
+        'Unit': '$'
+    })
+
+    metrics.append({
+        'Metric': 'Largest Win',
+        'RNN Backtester': safe_get(rnn_results, 'largest_win', 0),
+        'backintime': bt_derived.get('largest_win', safe_get(bt_stats, 'largest_win', 0)),
+        'Difference': 0,
+        'Unit': '$'
+    })
+
+    metrics.append({
+        'Metric': 'Largest Loss',
+        'RNN Backtester': safe_get(rnn_results, 'largest_loss', 0),
+        'backintime': bt_derived.get('largest_loss', safe_get(bt_stats, 'largest_loss', 0)),
+        'Difference': 0,
+        'Unit': '$'
+    })
+
+    metrics.append({
+        'Metric': 'Expectancy',
+        'RNN Backtester': safe_get(rnn_results, 'expectancy', 0),
+        'backintime': bt_derived.get('expectancy', safe_get(bt_stats, 'expectancy', 0)),
         'Difference': 0,
         'Unit': '$'
     })
@@ -459,33 +734,29 @@ def compare_backtest_results(
     # Create DataFrame
     df_comparison = pd.DataFrame(metrics)
 
-    # Calculate differences
-    for i in range(len(df_comparison)):
-        rnn_val = df_comparison.loc[i, 'RNN Backtester']
-        bt_val = df_comparison.loc[i, 'backintime']
-
-        # Convert to float to handle Decimal types from backintime
-        rnn_val = float(rnn_val) if rnn_val is not None else 0
-        bt_val = float(bt_val) if bt_val is not None else 0
-
-        if rnn_val != 0:
-            diff_pct = ((bt_val - rnn_val) / abs(rnn_val)) * 100
-            df_comparison.loc[i, 'Difference'] = diff_pct
+    # Simple absolute differences (no percent scaling to avoid blow-ups)
+    df_comparison['Difference'] = df_comparison['backintime'].astype(float) - df_comparison['RNN Backtester'].astype(float)
 
     if verbose:
         print("\n Metric Comparison:")
-        print(df_comparison.to_string(index=False))
+        fmt = {
+            'RNN Backtester': lambda x: f"{x:,.2f}",
+            'backintime': lambda x: f"{x:,.2f}",
+            'Difference': lambda x: f"{x:,.2f}"
+        }
+        print(df_comparison.to_string(index=False, formatters=fmt))
 
         print("\n" + "="*70)
         print("EXECUTION IMPACT ANALYSIS")
         print("="*70)
 
         # Analyze key differences
-        total_pnl_diff = safe_get(rnn_results, 'total_pnl', 0) - safe_get(bt_stats, 'total_pnl', 0)
+        bt_pnl = bt_derived.get('total_pnl', safe_get(bt_stats, 'total_pnl', 0))
+        total_pnl_diff = safe_get(rnn_results, 'total_pnl', 0) - bt_pnl
 
         print(f"\n P&L Impact:")
         print(f"  RNN Backtester P&L:  ${safe_get(rnn_results, 'total_pnl', 0):>10,.2f}")
-        print(f"  backintime P&L:      ${safe_get(bt_stats, 'total_pnl', 0):>10,.2f}")
+        print(f"  backintime P&L:      ${bt_pnl:>10,.2f}")
         print(f"  Difference:          ${total_pnl_diff:>10,.2f}")
 
         if total_pnl_diff > 0:
@@ -497,7 +768,7 @@ def compare_backtest_results(
 
         print(f"\n Risk Metrics:")
         sharpe_rnn = safe_get(rnn_results, 'sharpe_ratio', 0)
-        sharpe_bt = safe_get(bt_stats, 'sharpe_ratio', 0)
+        sharpe_bt = bt_derived.get('sharpe_ratio', safe_get(bt_stats, 'sharpe_ratio', 0))
         print(f"  RNN Sharpe:     {sharpe_rnn:>8.2f}")
         print(f"  backintime Sharpe: {sharpe_bt:>8.2f}")
 
@@ -513,7 +784,7 @@ def compare_backtest_results(
         insights = []
 
         # Trade count difference
-        trades_diff = abs(safe_get(rnn_results, 'total_trades', 0) - safe_get(bt_stats, 'total_trades', 0))
+        trades_diff = abs(safe_get(rnn_results, 'total_trades', 0) - bt_derived.get('total_trades', safe_get(bt_stats, 'total_trades', 0)))
         if trades_diff > 0:
             insights.append(f"   Trade count differs by {trades_diff} - may be due to margin constraints or session handling")
 
@@ -527,11 +798,11 @@ def compare_backtest_results(
             insights.append(f"   Sharpe ratio differs significantly ({sharpe_diff:.2f}) - execution quality matters")
 
         # Win rate impact
-        wr_rnn = float(safe_get(rnn_results, 'win_rate', 0))
-        wr_bt = float(safe_get(bt_stats, 'win_rate', 0))
+        wr_rnn = normalize_win_rate(safe_get(rnn_results, 'win_rate', 0))
+        wr_bt = normalize_win_rate(bt_derived.get('win_rate', safe_get(bt_stats, 'win_rate', 0)))
         wr_diff = abs(wr_rnn - wr_bt)
-        if wr_diff > 0.05:
-            insights.append(f"   Win rate differs by {wr_diff*100:.1f}% - realistic fills affect outcomes")
+        if wr_diff > 5:
+            insights.append(f"   Win rate differs by {wr_diff:.1f}% - realistic fills affect outcomes")
 
         if insights:
             print("\n".join(insights))
@@ -543,10 +814,11 @@ def compare_backtest_results(
         print("RECOMMENDATIONS")
         print("="*70)
 
-        if safe_get(bt_stats, 'sharpe_ratio', 0) > 1.0:
+        bt_sharpe_val = bt_derived.get('sharpe_ratio', safe_get(bt_stats, 'sharpe_ratio', 0))
+        if bt_sharpe_val > 1.0:
             print("   backintime results look strong - strategy validated")
             print("      Consider live paper trading")
-        elif safe_get(bt_stats, 'sharpe_ratio', 0) > 0.5:
+        elif bt_sharpe_val > 0.5:
             print("    backintime results are marginal")
             print("      Optimize risk parameters before live trading")
         else:

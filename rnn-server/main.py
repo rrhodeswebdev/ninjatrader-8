@@ -69,7 +69,7 @@ trading_model = TradingModel(sequence_length=15)
 # INCREASED: Set to 0.55 for better quality signals and fewer false entries
 # Higher threshold = fewer but higher quality trades
 # Was 0.25 (testing), now 0.55 (production quality)
-MIN_CONFIDENCE_THRESHOLD = 0.55
+MIN_CONFIDENCE_THRESHOLD = 0.8
 
 # Track training status
 training_status = {

@@ -32,8 +32,6 @@ from config import (
     BACKTEST_INITIAL_CAPITAL,
     BACKTEST_COMMISSION_PER_CONTRACT,
     BACKTEST_SLIPPAGE_TICKS,
-    DAILY_GOAL,
-    DAILY_MAX_LOSS,
     MAX_TRADES_PER_DAY,
     CONTRACT
 )
@@ -45,7 +43,7 @@ def generate_sample_data(n_bars: int = 15000) -> pd.DataFrame:
 
     start_price = 24000.0
     # Start on Monday at 9:30 AM (market open)
-    start_time = pd.Timestamp('2024-01-02 09:30:00')  # Tuesday, Jan 2, 2024
+    start_time = pd.Timestamp('2025-01-02 09:30:00')  # Thursday, Jan 2, 2025
 
     # Generate 1-minute bars during stock market hours
     times = []
@@ -103,41 +101,75 @@ def main():
     print("\n" + "="*70)
     print("  RNN BACKTESTING COMPARISON")
     print("  Testing both RNN and backintime approaches")
+    print("  Session: 9:30 AM - 4:00 PM ET (RTH aligned)")
     print("="*70)
 
     # ========================================================================
-    # STEP 1: Generate or load data
+    # STEP 1: Load full historical data (Sept 15 - Dec 12)
     # ========================================================================
 
-    print("\n[STEP 1] Loading data...")
+    print("\n[STEP 1] Loading full historical data...")
 
-    # Try to load real data, fall back to synthetic
-    data_file = Path('../backtester/data/historical_data.csv') #NQ_1m_20251013_20251112
+    # Use full historical data file for proper train/test split
+    data_file = Path('../backtester/data/MNQ12-25_Sept15-Dec12.csv')
+
+    # Fallback to shorter file if full history not available
+    if not data_file.exists():
+        data_file = Path('../backtester/data/MNQ_12-25_12_8-12_12.Last.csv')
+        print(f"  Note: Using shorter data file (12/8-12/12 only)")
 
     if data_file.exists():
         loader = DataLoader()
-        df = loader.load_csv(str(data_file))
-        print(f"✓ Loaded {len(df)} bars from {data_file}")
+        # Auto-detect format: NinjaTrader uses semicolons, standard CSVs use commas
+        with open(data_file, 'r') as f:
+            first_line = f.readline()
+        if ';' in first_line:
+            # NinjaTrader format (semicolon-delimited, no header)
+            df = loader.load_ninjatrader_csv(str(data_file))
+            print(f"OK Loaded {len(df)} bars from {data_file} (NinjaTrader format)")
+        else:
+            df = loader.load_csv(str(data_file))
+            print(f"OK Loaded {len(df)} bars from {data_file}")
     else:
-        print(f"⚠️  {data_file} not found, generating synthetic stock market data")
-        df = generate_sample_data(n_bars=15000)  # Increased for better coverage
+        print(f"WARNING:  {data_file} not found, generating synthetic stock market data")
+        df = generate_sample_data(n_bars=15000)
+
+    print(f"  Full data range: {df['time'].min()} to {df['time'].max()}")
 
     # ========================================================================
-    # STEP 2: Split data
+    # STEP 2: Split data by DATE (not ratio) - matching live trading
     # ========================================================================
+    # Training: All data up to Dec 7, 4:00 PM (market close)
+    # Testing: Dec 8 onwards (including pre-market for warm-up)
+    # Note: Dec 6-7, 2025 are Sat/Sun - use Dec 5 (Friday) as last validation day
 
-    print("\n[STEP 2] Splitting data...")
+    print("\n[STEP 2] Splitting data by date...")
 
-    loader = DataLoader()
-    train_df, val_df, test_df = loader.split_train_test(
-        df,
-        train_ratio=0.6,
-        validation_ratio=0.2
-    )
+    # Training cutoff: Dec 5, 2025 at 4:00 PM (last trading day before test period)
+    # Dec 6-7 are weekend (no trading), Dec 8 is Monday (test start)
+    train_cutoff = pd.Timestamp('2025-12-05 16:00:00')
+    test_start = pd.Timestamp('2025-12-08 07:30:00')  # Include pre-market for warm-up
 
-    print(f"  Train: {len(train_df)} bars")
-    print(f"  Validation: {len(val_df)} bars")
-    print(f"  Test: {len(test_df)} bars")
+    train_df = df[df['time'] <= train_cutoff].copy()
+    test_df_full = df[df['time'] >= test_start].copy()
+
+    # For validation, use last trading day of training data (Dec 5 - Friday)
+    val_start = pd.Timestamp('2025-12-05 09:30:00')
+    val_df = train_df[train_df['time'] >= val_start].copy()
+    train_df = train_df[train_df['time'] < val_start].copy()
+
+    print(f"  Train: {len(train_df)} bars (up to Dec 4 close)")
+    print(f"  Validation: {len(val_df)} bars (Dec 5 only)")
+    print(f"  Test: {len(test_df_full)} bars (Dec 8-12 with pre-market)")
+
+    # For the test period, include pre-market data (7:30 AM - 9:30 AM) for warm-up
+    # but gate actual trading to 9:30 AM onwards
+    print(f"\n  Test period includes pre-market data for warm-up (115 bars)")
+    print(f"  Trading will be gated to 9:30 AM - 4:00 PM")
+
+    # Filter test data to include warm-up period + RTH
+    test_df = loader.filter_trading_hours(test_df_full, start_time="07:30", end_time="16:00")
+    print(f"  Filtered test: {len(test_df)} bars (7:30 AM - 4:00 PM)")
 
     # ========================================================================
     # STEP 3: Train RNN model
@@ -160,17 +192,24 @@ def main():
     print("[STEP 4] QUICK VALIDATION - RNN Event-Driven Backtester")
     print("="*70)
 
+    # Disable daily limits for backtesting to match backintime behavior
+    # (backintime doesn't have intra-day P&L cutoffs)
     rnn_backtester = RNNBacktester(
         initial_capital=BACKTEST_INITIAL_CAPITAL,
         commission_per_contract=BACKTEST_COMMISSION_PER_CONTRACT,
         slippage_ticks=BACKTEST_SLIPPAGE_TICKS,
-        daily_goal=DAILY_GOAL,
-        daily_max_loss=DAILY_MAX_LOSS,
+        daily_goal=999999,  # Effectively disabled for fair comparison
+        daily_max_loss=999999,  # Effectively disabled for fair comparison
         max_trades_per_day=MAX_TRADES_PER_DAY,
-        contract=CONTRACT
+        contract=CONTRACT,
+        fixed_contracts=1  # Force 1-lot to align with backintime adapter
     )
 
-    rnn_results = rnn_backtester.run(test_df, model, verbose=True)
+    # NOTE: we now run the RNN backtester on the same session-aligned data
+    # used by backintime (constructed below). We set this placeholder here
+    # and overwrite it once the combined dataset is built.
+    rnn_trade_log = Path("results") / "rnn_backtester_trades.csv"
+    rnn_results = None
 
     # ========================================================================
     # STEP 5: Production validation with backintime (if available)
@@ -249,6 +288,17 @@ def main():
         combined_df['time'] = pd.to_datetime(combined_df['time'])
         combined_df = combined_df.sort_values('time').reset_index(drop=True)
 
+        # Force alignment to the first 9:30 AM bar to avoid mid-day starts
+        combined_df['hour'] = combined_df['time'].dt.hour
+        combined_df['minute'] = combined_df['time'].dt.minute
+        session_mask = (combined_df['hour'] == 9) & (combined_df['minute'] == 30)
+        if session_mask.any():
+            first_session_pos = combined_df[session_mask].index[0]
+            combined_df = combined_df.iloc[first_session_pos:].copy().reset_index(drop=True)
+            print(f"    Trimmed combined data to first 9:30 session at position {first_session_pos}: "
+                  f"{combined_df['time'].iloc[0]}")
+        combined_df = combined_df.drop(columns=['hour', 'minute'])
+
         print(f"    Combined total: {len(combined_df)}")
         print(f"    Date range: {combined_df['time'].iloc[0]} to {combined_df['time'].iloc[-1]}")
 
@@ -289,6 +339,14 @@ def main():
         since_dt = since_dt.to_pydatetime()
         until_dt = until_dt.to_pydatetime()
 
+        # Run RNN backtester on the exact same combined data for a fair comparison
+        rnn_results = rnn_backtester.run(
+            combined_df,
+            model,
+            verbose=True,
+            trade_log_path=str(rnn_trade_log)
+        )
+
         # Run backintime backtest
         backintime_results = run_rnn_backtest(
             model=model,
@@ -297,7 +355,14 @@ def main():
             until=until_dt,
             initial_capital=25000.0,
             atr_multiplier=2.0,
-            results_dir='./results'
+            contract=CONTRACT,
+            assume_utc=False,
+            # Use RTH session (9:30 AM - 4:00 PM) to match actual live trading
+            session_start=timedelta(hours=9, minutes=30),
+            session_end=timedelta(hours=16, minutes=0),
+            # Data is already ET; keep session timezone in ET to avoid unintended shifts
+            session_timezone='America/New_York',
+            results_dir='./results/backintime'
         )
 
         has_backintime = True
@@ -316,12 +381,68 @@ def main():
     if has_backintime and backintime_results:
         # Use the comparison utility
         from data_loaders import compare_backtest_results
+        from glob import glob
 
         comparison_df = compare_backtest_results(
             rnn_results,
             backintime_results,
             verbose=True
         )
+
+        # Normalize backintime trades to RNN format for manual diffing
+        try:
+            trades_dir = Path('results/backintime')
+            # Choose trade file that matches the latest stats timestamp (to avoid mixing runs)
+            stats_files = sorted(trades_dir.glob('parameterizedrnnstrategy_stats_*.csv'),
+                                 key=lambda p: p.stat().st_mtime)
+            trade_file = None
+            if stats_files:
+                latest_stats = stats_files[-1]
+                ts = latest_stats.stem.split('_')[-1]  # e.g., 20251129101201
+                candidate = trades_dir / f'parameterizedrnnstrategy_trades_{ts}.csv'
+                if candidate.exists():
+                    trade_file = candidate
+            if trade_file is None:
+                # Fallback to latest trade file by mtime
+                trade_files = sorted(trades_dir.glob('parameterizedrnnstrategy_trades_*.csv'),
+                                     key=lambda p: p.stat().st_mtime)
+                trade_file = trade_files[-1] if trade_files else None
+
+            if trade_file:
+                bti_raw = pd.read_csv(trade_file, sep=';', parse_dates=['Date Created'])
+                trades = []
+                pos = None
+                entry_price = None
+                entry_time = None
+                for _, row in bti_raw.sort_values('Date Created').iterrows():
+                    t = row['Date Created']
+                    price = row['Fill Price']
+                    is_short = bool(row['Short'])
+                    side = row['Side']
+                    if pos is None:
+                        if side == 'BUY' and not is_short:
+                            pos = 'long'; entry_price = price; entry_time = t
+                        elif side == 'SELL' and is_short:
+                            pos = 'short'; entry_price = price; entry_time = t
+                        continue
+                    if pos == 'long' and side == 'SELL' and not is_short:
+                        trades.append({'entry_time': entry_time, 'exit_time': t, 'direction': 'long',
+                                       'contracts': 1, 'entry_price': entry_price, 'exit_price': price})
+                        pos = None; entry_price = None; entry_time = None
+                    elif pos == 'short' and side == 'BUY':
+                        trades.append({'entry_time': entry_time, 'exit_time': t, 'direction': 'short',
+                                       'contracts': 1, 'entry_price': entry_price, 'exit_price': price})
+                        pos = None; entry_price = None; entry_time = None
+                    elif pos == 'long' and side == 'SELL' and is_short:
+                        trades.append({'entry_time': entry_time, 'exit_time': t, 'direction': 'long',
+                                       'contracts': 1, 'entry_price': entry_price, 'exit_price': price})
+                        pos = 'short'; entry_price = price; entry_time = t
+                bti_trades = pd.DataFrame(trades)
+                output_path = trades_dir / 'backintime_trades_converted.csv'
+                bti_trades.to_csv(output_path, index=False)
+                print(f"  Normalized backintime trades exported to {output_path} (source: {trade_file.name})")
+        except Exception as e:
+            print(f"  WARNING: Unable to export normalized backintime trades: {e}")
     else:
         # Manual display if backintime not available
         print("\n" + "="*70)

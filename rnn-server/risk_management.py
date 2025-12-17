@@ -34,6 +34,7 @@ class PositionSizer:
         account_balance: float,
         stop_loss_distance: float,
         tick_value: float = 12.50,  # ES futures: $12.50 per tick (0.25 point)
+        tick_size: float = 0.25,    # Tick size in points (0.25 for ES/MNQ)
         regime: str = 'unknown'
     ) -> Dict[str, float]:
         """
@@ -44,6 +45,7 @@ class PositionSizer:
             account_balance: Current account balance ($)
             stop_loss_distance: Stop loss distance in points
             tick_value: Dollar value per tick
+            tick_size: Tick size in points
             regime: Market regime (for regime-based adjustments)
 
         Returns:
@@ -90,9 +92,10 @@ class PositionSizer:
         risk_dollars = account_balance * risk_pct
 
         # Calculate contracts needed
-        # Risk per contract = stop_loss_distance * tick_value
-        # (stop_loss_distance is in points, tick_value is $/tick)
-        ticks_per_point = 4  # ES: 4 ticks per point (0.25 each)
+        # Risk per contract = stop_loss_distance (points) * ticks_per_point * tick_value
+        ticks_per_point = 4  # Default to ES/MNQ
+        if tick_size is not None and tick_size > 0:
+            ticks_per_point = max(1, round(1.0 / tick_size))
         risk_per_contract = stop_loss_distance * ticks_per_point * tick_value
 
         if risk_per_contract <= 0:
@@ -523,6 +526,7 @@ class RiskManager:
         regime: str,
         account_balance: float,
         tick_value: float = 12.50,
+        tick_size: float = 0.25,
         regime_info: Optional[dict] = None
     ) -> Dict:
         """
@@ -537,6 +541,7 @@ class RiskManager:
             regime: Market regime (string for backward compatibility)
             account_balance: Account balance
             tick_value: Value per tick
+            tick_size: Tick size in points
             regime_info: Enhanced regime info dict with trend_direction, trend_strength (optional)
 
         Returns:
@@ -604,6 +609,7 @@ class RiskManager:
             account_balance,
             stops['stop_distance'],
             tick_value,
+            tick_size,
             regime
         )
 
