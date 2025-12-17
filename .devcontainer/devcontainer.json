@@ -1,0 +1,7 @@
+{
+  "name": "Ninjatrader 8",
+  "image": "mcr.microsoft.com/devcontainers/python",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  }
+}

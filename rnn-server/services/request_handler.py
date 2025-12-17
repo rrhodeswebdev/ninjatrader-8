@@ -1,5 +1,6 @@
 """Service functions for handling prediction requests using functional composition."""
 
+import logging
 from typing import Dict, Any, Callable
 import pandas as pd
 import numpy as np
@@ -37,6 +38,8 @@ from core.multi_timeframe_filter import (
     check_multi_timeframe_alignment,
     get_mtf_filter,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def handle_historical_request(
@@ -158,13 +161,13 @@ def handle_realtime_request(
     # Update model with new data
     current_data = model.update_historical_data(new_bar, new_bar_secondary)
 
-    print(f"\n{'='*70}")
-    print(f"📊 REQUEST HANDLER - CHECKING MODEL STATUS")
-    print(f"{'='*70}")
-    print(f"Model trained: {model.is_trained}")
-    print(f"Training in progress: {training_status['is_training']}")
-    print(f"Data bars: {len(current_data)}")
-    print(f"{'='*70}\n")
+    logger.info("="*70)
+    logger.info("📊 REQUEST HANDLER - MODEL STATUS CHECK")
+    logger.info("="*70)
+    logger.info(f"   Model trained: {model.is_trained}")
+    logger.info(f"   Training in progress: {training_status['is_training']}")
+    logger.info(f"   Data bars: {len(current_data)}")
+    logger.info("="*70)
 
     # Check if predictions should be blocked
     should_block, reason = should_block_prediction_during_training(
@@ -173,9 +176,9 @@ def handle_realtime_request(
     )
 
     if should_block:
-        print(f"\n🚫 PREDICTION BLOCKED: {reason}")
-        print(f"   Model trained: {model.is_trained}")
-        print(f"   Training in progress: {training_status['is_training']}\n")
+        logger.warning(f"🚫 PREDICTION BLOCKED: {reason}")
+        logger.warning(f"   Model trained: {model.is_trained}")
+        logger.warning(f"   Training in progress: {training_status['is_training']}")
         return {
             "status": "training" if training_status["is_training"] else "not_trained",
             "message": reason,
@@ -188,19 +191,20 @@ def handle_realtime_request(
 
     # Make prediction
     try:
-        print(f"\n{'='*70}")
-        print(f"STARTING PREDICTION")
-        print(f"{'='*70}")
-        print(f"Model trained: {model.is_trained}")
-        print(f"Training in progress: {training_status['is_training']}")
-        print(f"Data available: {len(current_data)} bars")
-        print(f"{'='*70}\n")
+        logger.info("="*70)
+        logger.info("🔮 STARTING PREDICTION")
+        logger.info("="*70)
+        logger.info(f"   Model trained: {model.is_trained}")
+        logger.info(f"   Training in progress: {training_status['is_training']}")
+        logger.info(f"   Data available: {len(current_data)} bars")
+        logger.info("="*70)
 
         account_balance = request.get('accountBalance', 25000.0)
 
         # Validate account balance
         is_valid, error = validate_account_balance(account_balance)
         if not is_valid:
+            logger.error(f"❌ Invalid account balance: {error}")
             return {
                 "status": "error",
                 "message": error,
@@ -208,8 +212,8 @@ def handle_realtime_request(
                 "confidence": 0.0
             }
 
-        # Get trade parameters from model FIRST to know the signal direction
-        print(f"\n🤖 Getting model prediction to check trend alignment...")
+        # Get trade parameters from model
+        logger.info("🤖 Getting model prediction...")
         trade_params = model.predict_with_risk_params(
             current_data,
             account_balance=account_balance
@@ -218,7 +222,7 @@ def handle_realtime_request(
         signal = trade_params['signal']
         confidence = trade_params.get('confidence', 0.0)
 
-        print(f"   Model signal: {signal.upper()}, Confidence: {confidence:.2%}")
+        logger.info(f"   Model signal: {signal.upper()}, Confidence: {confidence:.2%}")
 
         # Check multi-timeframe alignment AFTER getting model signal
         # This prevents counter-trend trades that have negative expected value
