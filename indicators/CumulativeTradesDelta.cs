@@ -15,12 +15,12 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 {
 	/// Reset mode values: 0 = None, 1 = ETH only, 2 = ETH + RTH (default)
 
-	public class CumulativeVolumeDelta : Indicator
+	public class CumulativeTradesDelta : Indicator
 	{
 		#region Private Fields
 
-		private double currentAskVolume;
-		private double currentBidVolume;
+		private double currentAskTrades;
+		private double currentBidTrades;
 		private double currentDelta;
 		private double previousClose;
 		private double lastTradePrice;
@@ -30,10 +30,10 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 		private double deltaHigh;
 		private double deltaLow;
 
-		private Series<double> cvdOpen;
-		private Series<double> cvdHigh;
-		private Series<double> cvdLow;
-		private Series<double> cvdClose;
+		private Series<double> ctdOpen;
+		private Series<double> ctdHigh;
+		private Series<double> ctdLow;
+		private Series<double> ctdClose;
 
 		private SessionIterator sessionIterator;
 		private SessionIterator rthSessionIterator;
@@ -48,8 +48,8 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 		{
 			if (State == State.SetDefaults)
 			{
-				Description					= "Cumulative Volume Delta";
-				Name						= "CumulativeVolumeDelta";
+				Description					= "Cumulative Trades Delta";
+				Name						= "CumulativeTradesDelta";
 				Calculate					= Calculate.OnEachTick;
 				IsOverlay					= false;
 				DisplayInDataBox			= true;
@@ -59,11 +59,11 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 
 				ResetMode					= 2;
 				RthSessionTemplate			= "CME US Index Futures RTH";
-				BullishColor				= Brushes.Cyan;
-				BearishColor				= Brushes.Cyan;
+				BullishColor				= Brushes.Magenta;
+				BearishColor				= Brushes.Magenta;
 				BarThickness				= 2;
 
-				AddPlot(new Stroke(Brushes.Transparent, 0), PlotStyle.Line, "CVD");
+				AddPlot(new Stroke(Brushes.Transparent, 0), PlotStyle.Line, "CTD");
 			}
 			else if (State == State.Configure)
 			{
@@ -72,8 +72,8 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 			}
 			else if (State == State.DataLoaded)
 			{
-				currentAskVolume	= 0;
-				currentBidVolume	= 0;
+				currentAskTrades	= 0;
+				currentBidTrades	= 0;
 				currentDelta		= 0;
 				previousClose		= 0;
 				lastTradePrice		= 0;
@@ -83,10 +83,10 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 				deltaHigh			= double.MinValue;
 				deltaLow			= double.MaxValue;
 
-				cvdOpen		= new Series<double>(this);
-				cvdHigh		= new Series<double>(this);
-				cvdLow		= new Series<double>(this);
-				cvdClose	= new Series<double>(this);
+				ctdOpen		= new Series<double>(this);
+				ctdHigh		= new Series<double>(this);
+				ctdLow		= new Series<double>(this);
+				ctdClose	= new Series<double>(this);
 
 				sessionIterator			= new SessionIterator(Bars);
 				rthSessionIterator		= new SessionIterator(BarsArray[2]);
@@ -120,8 +120,8 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 					if (lastBarIndex >= 0)
 						previousClose += currentDelta;
 
-					currentAskVolume	= 0;
-					currentBidVolume	= 0;
+					currentAskTrades	= 0;
+					currentBidTrades	= 0;
 					currentDelta		= 0;
 					deltaHigh			= double.MinValue;
 					deltaLow			= double.MaxValue;
@@ -129,25 +129,23 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 					lastBarIndex = primaryBar;
 				}
 
-				double tradePrice	= Closes[1][0];
-				double tradeVolume	= Volumes[1][0];
+				double tradePrice = Closes[1][0];
 
 				// Classify: bid/ask when available, uptick/downtick as fallback
+				// Count 1 trade instead of accumulating volume
 				if (currentAsk > 0 && currentBid > 0)
 				{
-					// We have valid bid/ask data
 					if (tradePrice >= currentAsk)
-						currentAskVolume += tradeVolume;
+						currentAskTrades += 1;
 					else if (tradePrice <= currentBid)
-						currentBidVolume += tradeVolume;
+						currentBidTrades += 1;
 					else
 					{
 						// Trade between bid and ask - use uptick/downtick
 						if (lastTradePrice > 0 && tradePrice > lastTradePrice)
-							currentAskVolume += tradeVolume;
+							currentAskTrades += 1;
 						else if (lastTradePrice > 0 && tradePrice < lastTradePrice)
-							currentBidVolume += tradeVolume;
-						// If price unchanged, don't assign (neutral)
+							currentBidTrades += 1;
 					}
 				}
 				else
@@ -156,16 +154,14 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 					if (lastTradePrice > 0)
 					{
 						if (tradePrice > lastTradePrice)
-							currentAskVolume += tradeVolume;
+							currentAskTrades += 1;
 						else if (tradePrice < lastTradePrice)
-							currentBidVolume += tradeVolume;
-						// If price unchanged, don't assign (neutral)
+							currentBidTrades += 1;
 					}
-					// First trade with no reference - don't assign
 				}
 
 				lastTradePrice = tradePrice;
-				currentDelta = currentAskVolume - currentBidVolume;
+				currentDelta = currentAskTrades - currentBidTrades;
 
 				// Track running high/low of cumulative delta during bar formation
 				double runningCumulativeDelta = previousClose + currentDelta;
@@ -218,10 +214,10 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 				double low   = deltaLow == double.MaxValue ? close : deltaLow;
 				double open  = Math.Min(Math.Max(previousClose, low), high);
 
-				cvdOpen[0]	= open;
-				cvdHigh[0]	= high;
-				cvdLow[0]	= low;
-				cvdClose[0]	= close;
+				ctdOpen[0]	= open;
+				ctdHigh[0]	= high;
+				ctdLow[0]	= low;
+				ctdClose[0]	= close;
 				Value[0]	= close;
 			}
 		}
@@ -233,8 +229,8 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 
 			for (int index = ChartBars.FromIndex; index <= ChartBars.ToIndex; index++)
 			{
-				double high = cvdHigh.GetValueAt(index);
-				double low  = cvdLow.GetValueAt(index);
+				double high = ctdHigh.GetValueAt(index);
+				double low  = ctdLow.GetValueAt(index);
 
 				MaxValue = Math.Max(MaxValue, high);
 				MinValue = Math.Min(MinValue, low);
@@ -243,17 +239,17 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 
 		protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
 		{
-			if (ChartBars == null || cvdOpen == null)
+			if (ChartBars == null || ctdOpen == null)
 				return;
 
 			float barWidth = (float)chartControl.BarWidth;
 
 			for (int index = ChartBars.FromIndex; index <= ChartBars.ToIndex; index++)
 			{
-				double open  = cvdOpen.GetValueAt(index);
-				double high  = cvdHigh.GetValueAt(index);
-				double low   = cvdLow.GetValueAt(index);
-				double close = cvdClose.GetValueAt(index);
+				double open  = ctdOpen.GetValueAt(index);
+				double high  = ctdHigh.GetValueAt(index);
+				double low   = ctdLow.GetValueAt(index);
+				double close = ctdClose.GetValueAt(index);
 
 				float x      = chartControl.GetXByBarIndex(ChartBars, index);
 				float yOpen  = chartScale.GetYByValue(open);
