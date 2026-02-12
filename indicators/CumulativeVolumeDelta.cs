@@ -167,10 +167,9 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 				lastTradePrice = tradePrice;
 				currentDelta = currentAskVolume - currentBidVolume;
 
-				// Track running high/low of cumulative delta during bar formation
-				double runningCumulativeDelta = previousClose + currentDelta;
-				deltaHigh = Math.Max(deltaHigh, runningCumulativeDelta);
-				deltaLow = Math.Min(deltaLow, runningCumulativeDelta);
+				// Track bar-relative high/low of delta (cumulative offset applied in BIP==0)
+				deltaHigh = Math.Max(deltaHigh, currentDelta);
+				deltaLow = Math.Min(deltaLow, currentDelta);
 			}
 			else if (BarsInProgress == 0)
 			{
@@ -214,8 +213,8 @@ namespace NinjaTrader.NinjaScript.Indicators.WolfToolz
 					previousClose = 0;
 
 				double close = previousClose + currentDelta;
-				double high  = deltaHigh == double.MinValue ? close : deltaHigh;
-				double low   = deltaLow == double.MaxValue ? close : deltaLow;
+				double high  = deltaHigh == double.MinValue ? close : previousClose + deltaHigh;
+				double low   = deltaLow == double.MaxValue ? close : previousClose + deltaLow;
 				double open  = Math.Min(Math.Max(previousClose, low), high);
 
 				cvdOpen[0]	= open;
